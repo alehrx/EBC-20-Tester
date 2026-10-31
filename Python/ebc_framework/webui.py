@@ -289,21 +289,35 @@ class Controller:
                 real_logger = DataLogger(out)
 
             class UILogger:
-                """Mirror every logged sample into the page's state."""
+                """Mirror every logged sample into the page's state.
+
+                Charge is integrated here rather than read from the CSV
+                logger, so the page shows it even when saving is off. Same
+                rule as DataLogger: zero-order hold on each interval's
+                starting current, over t_s, which is frozen during
+                reconnects.
+                """
 
                 def __init__(self, inner):
                     self._inner = inner
+                    self._cum_ah = 0.0
+                    self._last_t = None
+                    self._last_i = 0.0
 
                 def log(self, m, t_elapsed, **extra):
                     self._inner.log(m, t_elapsed, **extra)
+                    if self._last_t is not None:
+                        dt = t_elapsed - self._last_t
+                        if 0.0 < dt <= 3600.0:
+                            self._cum_ah += self._last_i * dt / 3600.0
+                    self._last_t = t_elapsed
+                    self._last_i = m.signed_current
                     with controller._lock:
                         controller.voltage = m.voltage
                         controller.current = m.signed_current
                         controller.mode = m.mode
                         controller.elapsed_s = t_elapsed
-                        cum = getattr(self._inner, "_cumulative_ah", None)
-                        if cum is not None:
-                            controller.cumulative_ah = cum
+                        controller.cumulative_ah = self._cum_ah
                         controller._push_sample(t_elapsed, m.voltage,
                                                 m.signed_current)
                     if controller._abort.is_set():

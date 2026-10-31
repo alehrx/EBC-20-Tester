@@ -62,6 +62,17 @@
     <div><span>File</span><b id="scsv" class="path">--</b></div>
   </div>
 
+  <div class="chartbar">
+    <span>Show the last</span>
+    <div class="seg" id="range" role="group" aria-label="Time window">
+      <button type="button" data-s="60">1 min</button>
+      <button type="button" data-s="300">5 min</button>
+      <button type="button" data-s="1800">30 min</button>
+      <button type="button" data-s="3600">60 min</button>
+      <button type="button" data-s="0">From start</button>
+    </div>
+  </div>
+
   <figure>
     <svg id="chart" viewBox="0 0 900 380" preserveAspectRatio="none"
          role="img" aria-label="Voltage and current against time"></svg>

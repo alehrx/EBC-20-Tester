@@ -251,7 +251,11 @@ def run_end_to_end():
         c.open_port("FAKE")
         wait_for(c, lambda s: s["status"] == "idle", 10, "idle again")
         c.start_test("connection_test", "LP604765", save=False)
-        wait_for(c, lambda s: len(s["samples"]) >= 5, 30, "some samples")
+        # Stop only once the main phase is driving its 0.5 A, so there is
+        # real charge to account for (the startup rest is at 0 A).
+        wait_for(c, lambda s: sum(1 for x in s["samples"]
+                                  if abs(x[2]) >= 0.4) >= 3,
+                 60, "main-phase current")
         stop_pressed = time.time()
         c.request_stop()
         snap = wait_for(c, lambda s: s["last_run"] is not None, 20,
@@ -262,6 +266,9 @@ def run_end_to_end():
         check("Stop takes effect within 3 s (took %.1f s)" % latency,
               latency < 3.0)
         check("unsaved run reports no CSV", snap["last_run"]["csv"] is None)
+        check("unsaved run still reports the charge it moved (%.5f Ah)"
+              % snap["last_run"]["cumulative_ah"],
+              abs(snap["last_run"]["cumulative_ah"]) > 1e-5)
         c.close_port()
 
         # ---- wrong port: must NOT claim to be connected ----

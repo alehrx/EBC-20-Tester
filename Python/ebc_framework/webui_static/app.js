@@ -237,7 +237,7 @@ function render(s) {
 
   $("selapsed").textContent = s.elapsed_s ? fmtTime(s.elapsed_s) : "--";
   $("smode").textContent = s.mode || "--";
-  $("scum").textContent = s.cumulative_ah ? s.cumulative_ah.toFixed(4) + " Ah" : "--";
+  $("scum").textContent = (running || s.cumulative_ah) ? s.cumulative_ah.toFixed(4) + " Ah" : "--";
   $("scsv").textContent = s.csv || (s.status === "running" ? "(not saving)" : "--");
 
   draw();
@@ -252,15 +252,48 @@ function fmtTime(sec) {
 
 const W = 900, H = 380, PAD_L = 56, PAD_R = 56, PAD_T = 14, PAD_B = 28;
 
+// Time window shown, in seconds of the run; 0 = everything since the start.
+let rangeS = Number(recall("range") || 0);
+
+function markRange() {
+  document.querySelectorAll("#range button").forEach((b) =>
+    b.classList.toggle("active", Number(b.dataset.s) === rangeS));
+}
+document.querySelectorAll("#range button").forEach((b) => {
+  b.onclick = () => {
+    rangeS = Number(b.dataset.s);
+    remember("range", String(rangeS));
+    markRange();
+    draw();
+  };
+});
+markRange();
+
+function visibleSamples() {
+  if (!rangeS || !samples.length) return samples;
+  const from = samples[samples.length - 1][0] - rangeS;
+  // Samples are in time order, so find the first one inside the window.
+  let lo = 0, hi = samples.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid][0] < from) lo = mid + 1; else hi = mid;
+  }
+  return samples.slice(lo);
+}
+
 function draw() {
   const svg = $("chart");
-  if (!samples.length) {
+  const view = visibleSamples();
+  if (!view.length) {
     svg.innerHTML = '<text x="450" y="190" text-anchor="middle" fill="currentColor" opacity=".4" font-size="14">no data yet</text>';
     return;
   }
-  const t0 = samples[0][0], t1 = samples[samples.length - 1][0] || 1;
+  // Until the run is longer than the window, show the whole run; after
+  // that the window scrolls, always ending at the newest sample.
+  const t1 = view[view.length - 1][0];
+  const t0 = rangeS ? Math.max(samples[0][0], t1 - rangeS) : view[0][0];
   const span = Math.max(t1 - t0, 1);
-  const vs = samples.map((s) => s[1]), is = samples.map((s) => s[2]);
+  const vs = view.map((s) => s[1]), is = view.map((s) => s[2]);
   const vlo = Math.min(...vs), vhi = Math.max(...vs);
   const ilo = Math.min(...is, 0), ihi = Math.max(...is, 0);
   const vpad = Math.max((vhi - vlo) * 0.1, 0.02);
@@ -270,14 +303,17 @@ function draw() {
   const yv = (v) => PAD_T + (1 - (v - (vlo - vpad)) / ((vhi + vpad) - (vlo - vpad))) * (H - PAD_T - PAD_B);
   const yi = (i) => PAD_T + (1 - (i - (ilo - ipad)) / ((ihi + ipad) - (ilo - ipad))) * (H - PAD_T - PAD_B);
 
-  // Decimate so a long run stays responsive.
-  const step = Math.max(1, Math.floor(samples.length / 1200));
+  // Decimate so a long run stays responsive, but always keep the newest
+  // sample so the trace reaches the right edge.
+  const step = Math.max(1, Math.floor(view.length / 1200));
+  const picked = [];
+  for (let k = 0; k < view.length; k += step) picked.push(view[k]);
+  if (picked[picked.length - 1] !== view[view.length - 1]) picked.push(view[view.length - 1]);
   let pv = "", pi = "";
-  for (let k = 0; k < samples.length; k += step) {
-    const s = samples[k];
+  picked.forEach((s, k) => {
     pv += (k ? "L" : "M") + x(s[0]).toFixed(1) + " " + yv(s[1]).toFixed(1);
     pi += (k ? "L" : "M") + x(s[0]).toFixed(1) + " " + yi(s[2]).toFixed(1);
-  }
+  });
 
   const parts = [];
   parts.push('<line x1="' + PAD_L + '" y1="' + yi(0).toFixed(1) + '" x2="' + (W - PAD_R) + '" y2="' + yi(0).toFixed(1) + '" stroke="currentColor" opacity=".18" stroke-dasharray="4 4"/>');
@@ -285,8 +321,11 @@ function draw() {
   parts.push(axisLabel(PAD_L - 8, yv(vlo), vlo.toFixed(2), "end", "var(--v)"));
   parts.push(axisLabel(W - PAD_R + 8, yi(ihi), ihi.toFixed(2), "start", "var(--i)"));
   parts.push(axisLabel(W - PAD_R + 8, yi(ilo), ilo.toFixed(2), "start", "var(--i)"));
-  parts.push(axisLabel(PAD_L, H - 8, fmtTime(0), "start", "currentColor"));
-  parts.push(axisLabel(W - PAD_R, H - 8, fmtTime(span), "end", "currentColor"));
+  // Time labels show the run's own elapsed time, so a scrolled window still
+  // tells you where in the test you are.
+  parts.push(axisLabel(PAD_L, H - 8, fmtTime(t0), "start", "currentColor"));
+  parts.push(axisLabel((PAD_L + W - PAD_R) / 2, H - 8, fmtTime((t0 + t1) / 2), "middle", "currentColor"));
+  parts.push(axisLabel(W - PAD_R, H - 8, fmtTime(t1), "end", "currentColor"));
   parts.push('<path d="' + pi + '" fill="none" stroke="var(--i)" stroke-width="1.6"/>');
   parts.push('<path d="' + pv + '" fill="none" stroke="var(--v)" stroke-width="1.8"/>');
   svg.innerHTML = parts.join("");
