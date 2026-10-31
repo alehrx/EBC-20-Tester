@@ -105,7 +105,7 @@ class TestDef:
 
     @classmethod
     def load(cls, path: str) -> "TestDef":
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return cls(json.load(fh))
 
 

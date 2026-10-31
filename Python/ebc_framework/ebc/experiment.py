@@ -25,11 +25,20 @@ from .protocol import Measurement
 from .device import EBCA20, SafetyLimits
 
 
-# Default ceiling on a sample-to-sample gap that still counts as continuous
-# current flow when building cumulative_ah. Real dropouts observed on this
-# hardware were 9-25 s, so this must stay well under that; callers running a
-# slow sample_period_s raise it via DataLogger(max_gap_s=...).
-MAX_INTEGRATION_GAP_S = 5.0
+# Guard against an absurd t_s jump from a corrupt row -- NOT a dropout
+# filter. cumulative_ah integrates against t_s, and the runner already
+# freezes t_s while a reconnect is in progress, so disconnected time never
+# reaches this function in the first place. A gap in t_s therefore means
+# samples were missed while the test kept running and current kept flowing,
+# which must be integrated, not discarded.
+#
+# Confirmed on hardware 2026-10-27: a 2C cycle logged 9 reconnects (t_s
+# frozen) and 9 missed-sample stretches (t_s advancing, 78 s total). An
+# earlier 5 s cutoff discarded that 78 s of real current and pushed the
+# cycle's coulombic efficiency to an impossible 101.4%; integrating it gives
+# 98.3%. During a rest the held current is zero, so a long gap there
+# contributes nothing either way.
+MAX_INTEGRATION_GAP_S = 3600.0
 
 
 class DataLogger:
@@ -106,13 +115,10 @@ class DataLogger:
         holds a commanded setpoint until the next command, so the previous
         sample's value is what actually flowed for that interval.
 
-        Gaps longer than max_gap_s are skipped rather than integrated. They
-        are reconnect holes, and no current flows across them -- confirmed on
-        hardware 2026-09-25, where voltage relaxed by the full IR drop during
-        a dropout -- so integrating would invent charge that never moved.
-        Measured dropouts were 9-25 s against a 1-2 s sample cadence, so the
-        threshold has to sit just above the normal cadence, not at some round
-        number well above it.
+        Every positive t_s interval is integrated. Reconnect holes do not
+        need filtering here because the runner stops advancing t_s for their
+        duration, so they arrive as a ~1 s step rather than a 20 s one. See
+        MAX_INTEGRATION_GAP_S for why an earlier cutoff here was wrong.
         """
         if self._last_t is not None:
             dt = t_elapsed - self._last_t

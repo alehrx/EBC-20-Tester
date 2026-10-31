@@ -101,7 +101,8 @@ class CellLibrary:
             return
         for fn in os.listdir(self.directory):
             if fn.endswith(".json"):
-                with open(os.path.join(self.directory, fn)) as fh:
+                with open(os.path.join(self.directory, fn),
+                          encoding="utf-8") as fh:
                     cell = Cell.from_dict(json.load(fh))
                     self._cells[cell.id] = cell
 

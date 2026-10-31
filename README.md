@@ -21,6 +21,10 @@ cd EBC-20-Tester
 pip install -r requirements.txt
 ```
 
+On macOS and Linux the commands are usually `python3` and `pip3` (plain
+`python` often does not exist). This README writes `python` for brevity --
+substitute whichever your machine has.
+
 Every command below is run from the `Python/ebc_framework` folder:
 
 ```bash
@@ -31,9 +35,21 @@ cd Python/ebc_framework
 
 1. Connect the cell to the EBC-A20 and switch the tester on.
 2. Plug the tester into the PC with its USB cable.
-3. Find its serial port:
+3. Find its serial port. The quickest way works on every platform:
+
+   ```bash
+   python launchTest.py --list-ports
+   ```
+
+   It lists the ports and flags the one that looks like the tester. To look
+   it up yourself instead:
    - **Windows:** Device Manager → *Ports (COM & LPT)* → "USB-SERIAL CH340
      (COM**5**)". The number varies by PC.
+   - **macOS:** `/dev/cu.usbserial-XXXX` (sometimes `/dev/cu.wchusbserialXXXX`).
+     Use the `/dev/cu.*` name, **not** its `/dev/tty.*` twin: opening the tty
+     twin blocks waiting for a carrier signal a USB-serial adapter never
+     sends. The suffix is tied to the adapter, so it can change between Macs
+     but stays the same on yours.
    - **Linux:** usually `/dev/ttyUSB0`.
 
 ## 3. First-time checks
@@ -77,6 +93,7 @@ python launchTest.py hppc --cell LP604765 --port COM5
 | `--out file.csv` | Save to a specific CSV path instead of the default. |
 | `--resume file.csv` | Continue an interrupted run (see below). |
 | `--list-cells` | List the cells available in `config/cells/`. |
+| `--list-ports` | List this machine's serial ports and flag the likely tester. |
 
 `<test>` can be a file name from `config/tests/` with or without `.json`
 (`hppc`, `examples/charge_to_3v8`), or the full path to any JSON file.
@@ -346,7 +363,9 @@ characterization sequence; see
 | `implausible voltage reading at startup` | The cell isn't connected, or the wrong `--cell` is selected. |
 | Write-path check failed | The PC reads the tester but commands have no effect. Re-plug and retry, and check the cell's leads. |
 | Readings don't match the LCD | Run `examples/verify_protocol.py` and report the numbers; scaling may differ on your firmware. |
-| Runs stop every few hours | In Device Manager, turn off "Allow the computer to turn off this device" for the USB adapter and hub, and disable sleep. |
+| Runs stop every few hours | **Windows:** in Device Manager, turn off "Allow the computer to turn off this device" for the USB adapter and hub, and disable sleep. **macOS:** start the run with `caffeinate -i python launchTest.py ...` so the Mac does not sleep mid-test. |
+| No ports listed, or the tester is missing from `--list-ports` | The tester is off or unplugged. On **macOS**, a CH340 also needs driver support: macOS 11 and newer include it, older versions need WCH's CH34x driver. Re-plug after installing. |
+| macOS: opening the port hangs | You picked the `/dev/tty.*` name. Use its `/dev/cu.*` twin instead. |
 
 ## Repository layout
 

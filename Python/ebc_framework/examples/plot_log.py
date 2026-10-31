@@ -44,7 +44,23 @@ def pick_file() -> str | None:
     return path or None
 
 
+def charge_column(path):
+    """Pick the charge column worth plotting.
+
+    "charge_ah" is the device's own counter and it restarts from zero at
+    every setpoint change -- so on anything with phases (a cycle, a DST, an
+    HPPC train) it draws a sawtooth rather than accumulated charge, and it
+    also resets on an auto-reconnect. "cumulative_ah" is the logger-side
+    running total that survives both. Prefer it, and fall back for CSVs
+    written before that column existed.
+    """
+    with open(path, newline="") as fh:
+        header = next(csv.reader(fh), [])
+    return "cumulative_ah" if "cumulative_ah" in header else "charge_ah"
+
+
 def read_csv(path):
+    column = charge_column(path)
     t, v, i, q = [], [], [], []
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
@@ -52,10 +68,10 @@ def read_csv(path):
                 t.append(float(row["t_s"]))
                 v.append(float(row["voltage_v"]))
                 i.append(float(row["signed_current_a"]))
-                q.append(float(row["charge_ah"]))
+                q.append(float(row[column]))
             except (KeyError, ValueError):
                 continue     # skip a partially-flushed last row
-    return t, v, i, q
+    return t, v, i, q, column
 
 
 def make_figure(title):
@@ -68,14 +84,16 @@ def make_figure(title):
     line_q, = ax_q.plot([], [])
     ax_v.set_ylabel("Voltage (V)")
     ax_i.set_ylabel("Current (A, +charge/-discharge)")
-    ax_q.set_ylabel("Charge (Ah)")
+    ax_q.set_ylabel("Charge (Ah)")   # retitled once the CSV is read
     ax_q.set_xlabel("Time (s)")
     for ax in (ax_v, ax_i, ax_q):
         ax.spines[["top", "right"]].set_visible(False)
     return fig, (ax_v, ax_i, ax_q), (line_v, line_i, line_q)
 
 
-def update(fig, axes, lines, t, v, i, q):
+def update(fig, axes, lines, t, v, i, q, column="charge_ah"):
+    axes[2].set_ylabel("Cumulative charge (Ah)" if column == "cumulative_ah"
+                       else "Charge (Ah, device counter)")
     lines[0].set_data(t, v)
     lines[1].set_data(t, i)
     lines[2].set_data(t, q)
@@ -107,8 +125,8 @@ def main():
     fig, axes, lines = make_figure(title)
 
     if not args.watch:
-        t, v, i, q = read_csv(csv_path)
-        update(fig, axes, lines, t, v, i, q)
+        t, v, i, q, column = read_csv(csv_path)
+        update(fig, axes, lines, t, v, i, q, column)
         plt.show()
         return
 
@@ -119,9 +137,9 @@ def main():
     try:
         while plt.fignum_exists(fig.number):
             if os.path.exists(csv_path):
-                t, v, i, q = read_csv(csv_path)
+                t, v, i, q, column = read_csv(csv_path)
                 if t:
-                    update(fig, axes, lines, t, v, i, q)
+                    update(fig, axes, lines, t, v, i, q, column)
             plt.pause(args.interval)
     except KeyboardInterrupt:
         pass

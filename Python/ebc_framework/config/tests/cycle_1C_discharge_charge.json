@@ -1,0 +1,24 @@
+{
+  "name": "cycle_1C_discharge_charge",
+  "type": "protocol",
+  "cell": "LP604765",
+  "description": "One cycle: 1C constant-current discharge, rest, 1C CC-CV charge, rest",
+  "sample_period_s": 1.0,
+  "max_duration_s": 7200,
+  "repeat": 1,
+  "order": ["discharge", "charge"],
+  "discharge": {
+    "protocol": "crate",
+    "c_rate": 1.0,
+    "v_min": 2.8,
+    "rest_after_s": 600
+  },
+  "charge": {
+    "protocol": "cc_cv",
+    "c_rate": 1.0,
+    "v_max": 4.2,
+    "cutoff_c": 0.05,
+    "rest_after_s": 600
+  },
+  "comment": "1C = 1.900 A for LP604765, which is also its standard_charge_a and standard_discharge_a, so both directions run at the cell's rated normal rate. Discharge stops at 2.80 V (above the 2.75 V floor), rests 10 min, then CC-CV charges to 4.20 V ending at a 0.05C = 0.095 A taper, then rests 10 min. PRECONDITION: start from a full cell, otherwise the discharge capacity is not a capacity. max_duration_s applies per phase. Override the cell at launch with --cell; raise repeat for more cycles."
+}

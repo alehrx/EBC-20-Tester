@@ -81,6 +81,42 @@ def result_folder_name(test_name: str) -> str:
     return safe or "unnamed_test"
 
 
+def list_serial_ports() -> None:
+    """Print the serial ports on this machine, flagging the likely tester.
+
+    The port name differs per platform -- COM5 on Windows, /dev/ttyUSB0 on
+    Linux, /dev/cu.usbserial-XXXX on macOS where the suffix is tied to the
+    individual adapter -- so there is no name worth hard-coding in the docs.
+    Asking pyserial beats sending people hunting in Device Manager.
+    """
+    from serial.tools import list_ports
+
+    ports = sorted(list_ports.comports(), key=lambda p: p.device)
+    if not ports:
+        print("No serial ports found. Is the tester plugged in and switched on?")
+        return
+
+    # The EBC-A20's USB interface is a CH340. On macOS prefer the callout
+    # device: opening the /dev/tty.* twin blocks waiting for a carrier signal
+    # that a USB-serial adapter never asserts.
+    def looks_like_tester(port) -> bool:
+        text = f"{port.device} {port.description} {port.hwid}".lower()
+        if sys.platform == "darwin" and "/dev/tty." in port.device:
+            return False
+        return "ch34" in text or "usbserial" in text
+
+    print("Serial ports on this machine:")
+    for port in ports:
+        mark = "  <-- likely the tester" if looks_like_tester(port) else ""
+        print(f"  {port.device:28s} {port.description}{mark}")
+
+    if sys.platform == "darwin":
+        print()
+        print("On macOS use the /dev/cu.* name, not its /dev/tty.* twin.")
+    print()
+    print("Pass the chosen one with --port.")
+
+
 def write_json_atomic(path: str, data: dict) -> bool:
     """Write a checkpoint without allowing a sync lock to stop the test.
 
@@ -269,7 +305,8 @@ def main(argv=None):
     ap.add_argument("--cell",
                     help="cell ID to use; overrides the test JSON's cell")
     ap.add_argument("--port", help="serial port of the EBC-A20 "
-                    "(e.g. COM5 or /dev/ttyUSB0)")
+                    "(e.g. COM5, /dev/ttyUSB0, /dev/cu.usbserial-10; "
+                    "see --list-ports)")
     ap.add_argument("--no-save", dest="save", action="store_false",
                     default=True,
                     help="only print samples to the terminal; write no CSV, "
@@ -282,6 +319,8 @@ def main(argv=None):
                     help="open a plot that updates while the test runs")
     ap.add_argument("--list-cells", action="store_true",
                     help="list cells in the library and exit")
+    ap.add_argument("--list-ports", action="store_true",
+                    help="list the serial ports on this machine and exit")
     ap.add_argument("--no-auto-reconnect", dest="auto_reconnect",
                     action="store_false", default=True,
                     help="disable automatic reconnect/resume after a dropped "
@@ -293,6 +332,10 @@ def main(argv=None):
                     help="give up after this many consecutive reconnect "
                     "attempts (0 = retry indefinitely, default)")
     args = ap.parse_args(argv)
+
+    if args.list_ports:
+        list_serial_ports()
+        return
 
     library = CellLibrary(args.cells_dir)
 
@@ -309,7 +352,9 @@ def main(argv=None):
     if args.test and args.resume:
         ap.error("specify either a test or --resume, not both")
     if not args.port:
-        ap.error("specify --port, the tester's serial port (e.g. COM5)")
+        ap.error("specify --port, the tester's serial port "
+                 "(e.g. COM5, /dev/ttyUSB0, /dev/cu.usbserial-10). "
+                 "Run --list-ports to see what this machine has.")
     if not args.save:
         if args.resume:
             ap.error("--no-save cannot be combined with --resume")
@@ -325,7 +370,7 @@ def main(argv=None):
         checkpoint_path = resolve_checkpoint_path(args.resume)
         if not os.path.isfile(checkpoint_path):
             ap.error(f"checkpoint not found: {checkpoint_path}")
-        with open(checkpoint_path) as fh:
+        with open(checkpoint_path, encoding="utf-8") as fh:
             checkpoint = json.load(fh)
         if checkpoint.get("complete"):
             ap.error("this checkpoint is already marked complete")
@@ -390,13 +435,8 @@ def main(argv=None):
         out = os.path.join(
             protocol_results,
             f"{test.name}_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-    # Anything beyond a few sample periods is a dropout hole, not flowing
-    # current, so cumulative_ah must not integrate across it. Scaled off the
-    # test's own cadence because sample_period_s ranges from 1 s to 30 s.
-    logger = PrintingLogger(DataLogger(
-        out, append=checkpoint is not None,
-        max_gap_s=max(3.0 * test.sample_period_s, 5.0))
-        if args.save else NullLogger())
+    logger = PrintingLogger(DataLogger(out, append=checkpoint is not None)
+                            if args.save else NullLogger())
 
     if args.live_plot:
         plot_script = os.path.join(os.path.dirname(__file__),
@@ -419,7 +459,7 @@ def main(argv=None):
             "runner_state": {"stage": "not_started", "csv_elapsed_s": 0.0},
         }
     elif checkpoint is None:
-        with open(meta_path, "w") as fh:
+        with open(meta_path, "w", encoding="utf-8") as fh:
             json.dump({
             "test": test.raw,
             "cell": dataclasses.asdict(cell),
