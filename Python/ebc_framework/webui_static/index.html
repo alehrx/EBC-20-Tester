@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EBC-A20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>EBC-A20</h1>
+  <div class="live">
+    <span class="reading"><b id="rv">--</b><i>V</i></span>
+    <span class="reading"><b id="ri">--</b><i>A</i></span>
+    <span id="badge" class="badge">disconnected</span>
+  </div>
+  <button id="stop" class="stop" disabled>STOP</button>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="run">Run</button>
+  <button class="tab" data-tab="cells">Cells</button>
+  <button class="tab" data-tab="tests">Tests</button>
+</nav>
+
+<main>
+
+<section id="tab-run" class="panel">
+  <div class="row">
+    <label>Serial port
+      <select id="port"></select>
+    </label>
+    <button id="connect">Connect</button>
+    <button id="disconnect" class="secondary">Disconnect</button>
+    <button id="rescan" class="secondary">Rescan</button>
+  </div>
+  <p id="porthint" class="hint"></p>
+
+  <div class="row">
+    <label>Cell
+      <select id="cell"></select>
+    </label>
+    <label>Test
+      <select id="test"></select>
+    </label>
+  </div>
+  <p id="testhint" class="hint"></p>
+
+  <div class="row">
+    <label class="check"><input type="checkbox" id="save" checked> Save data to CSV</label>
+    <button id="start" disabled>Start test</button>
+  </div>
+
+  <div id="status" class="status">Not connected.</div>
+  <div id="lastrun" class="lastrun" hidden></div>
+
+  <div class="stats">
+    <div><span>Elapsed</span><b id="selapsed">--</b></div>
+    <div><span>Mode</span><b id="smode">--</b></div>
+    <div><span>Cumulative</span><b id="scum">--</b></div>
+    <div><span>File</span><b id="scsv" class="path">--</b></div>
+  </div>
+
+  <figure>
+    <svg id="chart" viewBox="0 0 900 380" preserveAspectRatio="none"
+         role="img" aria-label="Voltage and current against time"></svg>
+    <figcaption>
+      <span class="key key-v">Voltage (V)</span>
+      <span class="key key-i">Current (A, + charge / - discharge)</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section id="tab-cells" class="panel hidden">
+  <div class="row">
+    <label>Start from
+      <select id="cellbase"><option value="">(blank template)</option></select>
+    </label>
+    <button id="cellload" class="secondary">Load</button>
+  </div>
+  <p class="hint">Saved to <code>config/cells/&lt;id&gt;.json</code>. The file
+    is validated with the same loader the runner uses, so anything that would
+    fail at launch is rejected here.</p>
+  <label class="full">File name (without .json)
+    <input id="cellname" type="text" placeholder="MyCell">
+  </label>
+  <textarea id="celljson" spellcheck="false" rows="22"></textarea>
+  <div class="row">
+    <button id="cellsave">Save cell</button>
+    <span id="cellmsg" class="msg"></span>
+  </div>
+</section>
+
+<section id="tab-tests" class="panel hidden">
+  <div class="row">
+    <label>Start from
+      <select id="testbase"><option value="">(blank template)</option></select>
+    </label>
+    <button id="testload" class="secondary">Load</button>
+  </div>
+  <p class="hint">Saved to <code>config/tests/&lt;name&gt;.json</code>.
+    Currents are C-rates unless <code>"current_unit": "A"</code>. Negative is
+    discharge, positive is charge.</p>
+  <label class="full">File name (without .json)
+    <input id="testname" type="text" placeholder="my_test">
+  </label>
+  <textarea id="testjson" spellcheck="false" rows="22"></textarea>
+  <div class="row">
+    <button id="testsave">Save test</button>
+    <span id="testmsg" class="msg"></span>
+  </div>
+</section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

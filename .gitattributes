@@ -1,0 +1,5 @@
+# Launchers only run with the right line endings, whatever the platform
+# they were committed from. Everything else keeps its current handling.
+*.command  text eol=lf
+*.sh       text eol=lf
+*.bat      text eol=crlf

@@ -29,3 +29,6 @@ Python/ebc_framework/runTestWithBMSVSCode.py
 
 # Local Claude Code settings
 .claude/
+
+# Private Python environment created by start_ebc.bat / start_ebc.command
+.venv/

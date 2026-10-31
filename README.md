@@ -74,6 +74,57 @@ with your port and `LP604765` with your cell (see section 5).
 
 ## 4. Run an experiment
 
+### From the browser (easiest)
+
+Double-click the launcher in the top folder of the repository:
+
+| Windows | macOS |
+| --- | --- |
+| `start_ebc.bat` | `start_ebc.command` |
+
+A window opens, then the interface opens in your browser at
+`http://127.0.0.1:8765/`. No commands to type, and no `pip install`
+needed: the launcher finds a Python 3.10+ that already has pyserial. If
+none has it, the **first** launch builds a private environment in `.venv`
+and installs the requirements there (about 30 s, needs internet). Later
+launches start straight away, offline.
+
+The interface has three tabs:
+
+- **Run** - choose the serial port, the cell and the test, then press
+  **Start test**. Live voltage and current are shown at the top, with a
+  graph of the run. Data is saved to `results/` exactly as from the
+  terminal (untick *Save data to CSV* for a quick check).
+- **Cells** - create or edit a cell file in `config/cells/`.
+- **Tests** - create or edit a test file in `config/tests/`.
+
+Cells and tests are checked before they are saved, using the same code
+that runs them, so a file that would fail at launch is refused with the
+reason instead.
+
+Things worth knowing:
+
+- **The cell is always your explicit choice.** C-rates scale with capacity,
+  so running a test written for a 7 Ah cell on a 1.9 Ah cell would drive
+  3.7 times the intended current. The page warns when the test file names
+  a different cell, and the confirmation dialog shows what 1C means in
+  amps on the selected cell.
+- **Start only unlocks once the tester answers.** Opening a port proves
+  nothing, since a wrong port opens just as happily; the interface waits for
+  real readings first.
+- **Keep the launcher window open** while you work. It owns the serial
+  port, so `launchTest.py` cannot use the same port at the same time.
+- **To stop a test**, press the red **STOP**. Closing the launcher window,
+  or pressing Ctrl-C in it, also sends STOP to the tester before quitting.
+  Closing only the *browser tab* does **not** stop a test.
+- Double-clicking the launcher again just reopens the page.
+- The interface is reachable only from this computer, never from the
+  network.
+
+On **macOS**, if the Mac refuses to open `start_ebc.command` (only happens
+when the repository was downloaded as a ZIP rather than cloned), right-click
+it, choose **Open**, then **Open** again.
+
 ### From a terminal
 
 ```bash
@@ -366,11 +417,19 @@ characterization sequence; see
 | Runs stop every few hours | **Windows:** in Device Manager, turn off "Allow the computer to turn off this device" for the USB adapter and hub, and disable sleep. **macOS:** start the run with `caffeinate -i python launchTest.py ...` so the Mac does not sleep mid-test. |
 | No ports listed, or the tester is missing from `--list-ports` | The tester is off or unplugged. On **macOS**, a CH340 also needs driver support: macOS 11 and newer include it, older versions need WCH's CH34x driver. Re-plug after installing. |
 | macOS: opening the port hangs | You picked the `/dev/tty.*` name. Use its `/dev/cu.*` twin instead. |
+| Launcher says "No Python 3.10 or newer was found" | Install Python from python.org (on Windows tick *Add python.exe to PATH*) or Anaconda, then double-click again. |
+| Launcher's first start fails while installing | Check the internet connection, delete the `.venv` folder next to the launcher, and double-click again. |
+| Web page: "the port opened but nothing answered" | Wrong port, or the tester is switched off. Pick another port and press Connect. |
+| Web page: "Port 8765 is used by another program" | Something else uses that port. Run `python webui.py --http-port 8766` from `Python/ebc_framework`. |
 
 ## Repository layout
 
 ```
+start_ebc.bat          double-click launcher for the web interface (Windows)
+start_ebc.command      double-click launcher for the web interface (macOS)
 Python/ebc_framework/
+  webui.py             browser interface (started by the launchers)
+  webui_static/        its page, script and styles
   launchTest.py        command-line entry point
   runTestVSCode.py     VS Code launcher (one test)
   runFolderVSCode.py   VS Code launcher (sequence of tests)
