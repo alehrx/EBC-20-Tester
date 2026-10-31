@@ -8,6 +8,10 @@
 #  A private environment also avoids Homebrew's Python refusing pip
 #  installs ("externally-managed-environment").
 #
+#  Keep this folder in your HOME folder, not on the Desktop or in
+#  Documents/Downloads: macOS privacy protection blocks Terminal and
+#  Python from those folders unless you grant access.
+#
 #  Keep the Terminal window that opens. It owns the tester's serial port.
 #  Closing it, or pressing Ctrl-C in it, sends STOP to the tester first.
 #
@@ -17,6 +21,8 @@
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$ROOT/Python/ebc_framework"
+VENV="$ROOT/.venv"
+VPY="$VENV/bin/python"
 export PYTHONIOENCODING=utf-8
 export PYTHONUNBUFFERED=1
 
@@ -26,11 +32,33 @@ pause_exit() {
   exit "${1:-1}"
 }
 
+privacy_help() {
+  echo
+  echo "macOS is blocking access to this folder:"
+  echo "    $ROOT"
+  echo "The Desktop, Documents and Downloads folders are protected by macOS"
+  echo "privacy settings, so Terminal and Python may not read files there."
+  echo
+  echo "Fix: in Finder, drag the EBC-20-Tester folder into your home folder"
+  echo "(the one with the house icon; Cmd+Shift+H opens it), then double-click"
+  echo "start_ebc.command there."
+  echo
+  echo "Or allow it: System Settings > Privacy & Security > Files and Folders"
+  echo "> Terminal > turn on the folder this is in."
+  pause_exit 1
+}
+
 if [ ! -f "$APP/webui.py" ]; then
   echo "This file has to stay in the EBC-20-Tester folder,"
   echo "next to the Python/ebc_framework folder."
   pause_exit 1
 fi
+
+py_ok()      { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; }
+has_serial() { "$1" -c 'import serial' >/dev/null 2>&1; }
+# Can this Python actually read the project files? Plain file tests from the
+# shell are not enough: macOS may allow the shell and still block Python.
+can_read()   { "$1" -c 'import sys; open(sys.argv[1], "rb").read(1)' "$ROOT/requirements.txt" >/dev/null 2>&1; }
 
 PY=""
 BASE=""
@@ -42,15 +70,18 @@ try() {
     c="$(command -v "$c" 2>/dev/null)" || return 0
   fi
   [ -x "$c" ] || return 0
-  "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
-      >/dev/null 2>&1 || return 0
+  py_ok "$c" || return 0
   [ -z "$BASE" ] && BASE="$c"
-  "$c" -c 'import serial' >/dev/null 2>&1 && PY="$c"
+  has_serial "$c" && PY="$c"
   return 0
 }
 
-# 1) the private environment, if an earlier launch created it
-try "$ROOT/.venv/bin/python"
+# 1) the private environment from an earlier launch, if it is complete.
+#    It is never used as the BASE for building a new one: if it is broken,
+#    it gets repaired or rebuilt below from a real installed Python.
+if [ -x "$VPY" ] && has_serial "$VPY"; then
+  PY="$VPY"
+fi
 
 # 2) an installed Python that already has pyserial. Explicit locations come
 #    first: a double-clicked script does not read ~/.zshrc, so conda's PATH
@@ -69,27 +100,38 @@ try python3
 try python
 
 if [ -z "$PY" ]; then
-  if [ -z "$BASE" ]; then
-    echo "No Python 3.10 or newer was found on this Mac."
-    echo "Install it from https://www.python.org/downloads/macos/"
-    echo "(or with Homebrew: brew install python), then double-click"
-    echo "this file again."
-    pause_exit 1
-  fi
-  echo "First start: setting up a private Python environment in .venv"
-  echo "It installs pyserial and matplotlib once. This needs internet."
-  echo
-  "$BASE" -m venv "$ROOT/.venv" || { echo "Could not create .venv."; pause_exit 1; }
-  "$ROOT/.venv/bin/python" -m pip install --upgrade pip >/dev/null 2>&1
-  if ! "$ROOT/.venv/bin/python" -m pip install -r "$ROOT/requirements.txt"; then
+  if [ -x "$VPY" ] && py_ok "$VPY"; then
+    # An earlier first start was interrupted: finish it in place.
+    echo "Finishing the private Python environment in .venv"
+    echo "(an earlier setup did not complete). This needs internet."
+  else
+    if [ -z "$BASE" ]; then
+      echo "No Python 3.10 or newer was found on this Mac."
+      echo "Install it from https://www.python.org/downloads/macos/"
+      echo "(or with Homebrew: brew install python), then double-click"
+      echo "this file again."
+      pause_exit 1
+    fi
+    can_read "$BASE" || privacy_help
+    [ -e "$VENV" ] && rm -rf "$VENV"        # a broken leftover: start over
+    echo "First start: setting up a private Python environment in .venv"
+    echo "using $BASE"
+    echo "It installs pyserial and matplotlib once. This needs internet."
     echo
-    echo "Installing the requirements failed. Check the internet connection,"
-    echo "delete the .venv folder next to this file, and try again."
+    "$BASE" -m venv "$VENV" || { echo "Could not create .venv."; pause_exit 1; }
+  fi
+  can_read "$VPY" || privacy_help
+  "$VPY" -m pip install --upgrade pip >/dev/null 2>&1
+  if ! "$VPY" -m pip install -r "$ROOT/requirements.txt"; then
+    echo
+    echo "Installing the requirements failed. Check the internet connection"
+    echo "and double-click this file again; it picks up where it stopped."
     pause_exit 1
   fi
-  PY="$ROOT/.venv/bin/python"
+  PY="$VPY"
 fi
 
+can_read "$PY" || privacy_help
 cd "$APP" || pause_exit 1
 echo "Using $PY"
 echo

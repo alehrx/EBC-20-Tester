@@ -221,11 +221,27 @@ def run_end_to_end():
         # ---- a run to completion, saving ----
         c.start_test("connection_test", "LP604765", save=True)
         wait_for(c, lambda s: s["status"] == "running", 5, "running")
-        snap = wait_for(c, lambda s: s["last_run"] is not None, 60,
-                        "run to finish")
+        seen = []
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            s = c.snapshot(0)
+            if s["progress"]:
+                seen.append(s["progress"]["fraction"])
+            if s["last_run"] is not None:
+                break
+            time.sleep(0.02)
+        snap = c.snapshot(0)
+        check("the runner's own reports drive a progress estimate "
+              "(%d readings, %.0f%% -> %.0f%%)"
+              % (len(seen), 100 * min(seen or [0]), 100 * max(seen or [0])),
+              len(seen) >= 3 and 0 < max(seen) < 1)
+        check("progress never went backwards during the run",
+              all(b >= a - 1e-9 for a, b in zip(seen, seen[1:])), seen)
         lr = snap["last_run"]
         check("run finishes with a 'finished' verdict",
               lr["status"] == "finished", lr)
+        check("a finished run reports the bar at 100%",
+              lr["fraction"] == 1.0, lr["fraction"])
         check("samples streamed to the page during the run",
               len(c.snapshot(0)["samples"]) > 20)
         csv_path = lr["csv"]

@@ -94,6 +94,7 @@ async function bootstrap() {
   fillBase($("cellbase"), CELLS.map((c) => c.id));
   fillBase($("testbase"), TESTS.map((t) => t.value));
   describeTest();
+  loadPreview();
 }
 
 function fillBase(sel, names) {
@@ -123,8 +124,8 @@ function describeTest() {
   }
   hint.textContent = parts.join("  ");
 }
-$("test").onchange = () => { remember("test", $("test").value); describeTest(); };
-$("cell").onchange = () => { remember("cell", $("cell").value); describeTest(); };
+$("test").onchange = () => { remember("test", $("test").value); describeTest(); loadPreview(); };
+$("cell").onchange = () => { remember("cell", $("cell").value); describeTest(); loadPreview(); };
 $("port").onchange = () => remember("port", $("port").value);
 
 /* ---------------- port + run ---------------- */
@@ -240,6 +241,7 @@ function render(s) {
   $("scum").textContent = (running || s.cumulative_ah) ? s.cumulative_ah.toFixed(4) + " Ah" : "--";
   $("scsv").textContent = s.csv || (s.status === "running" ? "(not saving)" : "--");
 
+  renderProgress(s);
   draw();
 }
 
@@ -333,6 +335,175 @@ function draw() {
 
 function axisLabel(x, y, text, anchor, fill) {
   return '<text x="' + x.toFixed(1) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="' + anchor + '" font-size="11" fill="' + fill + '" opacity=".85">' + text + "</text>";
+}
+
+/* ---------------- preview of the planned test ---------------- */
+
+let PLAN = null;          // preview of the selected test on the selected cell
+let PLAN_ERR = "";
+let RUN_PLAN = null;      // plan of the test that is actually running
+let RUN_ID = null;
+let previewSeq = 0;
+let wasRunning = false;
+
+const KIND_COLOR = {
+  discharge: "var(--dis)", profile: "var(--dis)", pulses: "var(--dis)",
+  charge: "var(--chg)", rest: "var(--rest)",
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (h) return h + "h " + String(m).padStart(2, "0") + "m";
+  if (m) return m + " min" + (m < 10 && s ? " " + s + " s" : "");
+  return s + " s";
+}
+
+async function loadPreview() {
+  const t = $("test").value, c = $("cell").value;
+  if (!t || !c) return;
+  const seq = ++previewSeq;
+  try {
+    const p = await api("/api/plan?test=" + encodeURIComponent(t) + "&cell=" + encodeURIComponent(c));
+    if (seq !== previewSeq) return;        // a newer selection already won
+    PLAN = p; PLAN_ERR = "";
+  } catch (e) {
+    if (seq !== previewSeq) return;
+    PLAN = null; PLAN_ERR = e.message;
+  }
+  if (!running) renderPlan(PLAN, null, PLAN_ERR);
+}
+
+function currentText(s) {
+  if (s.kind === "rest") return "0 A";
+  if (s.cccv === "cv") return s.i_cc.toFixed(2) + " → " + s.i_cut.toFixed(s.i_cut < 0.1 ? 3 : 2) + " A charge";
+  return (s.kind === "profile" ? "peak " : "") + Math.abs(s.current_a).toFixed(2) + " A " +
+    (s.current_a > 0 ? "charge" : "discharge");
+}
+
+function renderPlan(plan, prog, err) {
+  const svg = $("pchart");
+  if (!plan) {
+    $("ptitle").textContent = "Preview";
+    $("ptotal").textContent = "";
+    svg.innerHTML = '<text x="450" y="90" text-anchor="middle" fill="currentColor" opacity=".55" font-size="13">' +
+      esc(err ? "Preview not available: " + err : "Choose a cell and a test") + "</text>";
+    $("ptable").innerHTML = "";
+    $("pnotes").innerHTML = "";
+    return;
+  }
+  $("ptitle").textContent = (prog ? "Running: " : "Preview: ") + plan.test + " on " + plan.cell;
+  $("ptotal").textContent = (plan.exact ? "Total " : "Total ≈ ") + fmtDur(plan.total_s);
+  drawPlanChart(plan, prog);
+
+  const rows = ["<tr><th>#</th><th>Phase</th><th>Current</th><th>Length</th><th>Ends when</th></tr>"];
+  plan.segments.forEach((s, i) => {
+    const cls = prog ? (i < prog.index ? "done" : i === prog.index ? "active" : "") : "";
+    rows.push('<tr class="' + cls + '"><td class="num">' + (i + 1) + "</td>" +
+      '<td><span class="dot" style="background:' + KIND_COLOR[s.kind] + '"></span>' + esc(s.label) + "</td>" +
+      '<td class="num">' + currentText(s) + "</td>" +
+      '<td class="num">' + (s.exact ? "" : "≈ ") + fmtDur(s.duration_s) + "</td>" +
+      "<td>" + esc(s.until) + "</td></tr>");
+  });
+  $("ptable").innerHTML = rows.join("");
+  $("pnotes").innerHTML = plan.notes.map((n) => "<li>" + esc(n) + "</li>").join("");
+}
+
+function drawPlanChart(plan, prog) {
+  const W2 = 900, H2 = 170, L = 56, R = 12, T = 10, B = 24;
+  const total = Math.max(plan.total_s, 1);
+  const pts = plan.points;
+  const is = pts.map((p) => p[1]);
+  const ihi = Math.max(0, ...is), ilo = Math.min(0, ...is);
+  const pad = Math.max((ihi - ilo) * 0.12, 0.05);
+  const x = (t) => L + (t / total) * (W2 - L - R);
+  const y = (i) => T + (1 - (i - (ilo - pad)) / ((ihi + pad) - (ilo - pad))) * (H2 - T - B);
+  const parts = [];
+
+  // One tinted band per phase; a dashed edge where the length is estimated.
+  let t0 = 0;
+  plan.segments.forEach((s, i) => {
+    const t1 = t0 + s.duration_s, xa = x(t0), xb = x(t1);
+    parts.push('<rect x="' + xa.toFixed(1) + '" y="' + T + '" width="' + Math.max(xb - xa, 0.6).toFixed(1) +
+      '" height="' + (H2 - T - B) + '" fill="' + KIND_COLOR[s.kind] + '" opacity="' + (i % 2 ? 0.10 : 0.17) + '"/>');
+    if (!s.exact) {
+      parts.push('<line x1="' + xb.toFixed(1) + '" y1="' + T + '" x2="' + xb.toFixed(1) + '" y2="' + (H2 - B) +
+        '" stroke="currentColor" opacity=".4" stroke-dasharray="3 3"/>');
+    }
+    if (xb - xa > 70) {
+      const short = s.label.length > 22 ? s.label.slice(0, 21) + "…" : s.label;
+      parts.push('<text x="' + ((xa + xb) / 2).toFixed(1) + '" y="' + (T + 12) +
+        '" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">' + esc(short) + "</text>");
+    }
+    t0 = t1;
+  });
+
+  parts.push('<line x1="' + L + '" y1="' + y(0).toFixed(1) + '" x2="' + (W2 - R) + '" y2="' + y(0).toFixed(1) +
+    '" stroke="currentColor" opacity=".3"/>');
+  let d = "";
+  pts.forEach((p, k) => { d += (k ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1); });
+  parts.push('<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".9"/>');
+
+  if (ihi > 0) parts.push(axisLabel(L - 6, y(ihi), "+" + ihi.toFixed(2) + " A", "end", "currentColor"));
+  parts.push(axisLabel(L - 6, y(0), "0 A", "end", "currentColor"));
+  if (ilo < 0) parts.push(axisLabel(L - 6, y(ilo), ilo.toFixed(2) + " A", "end", "currentColor"));
+  parts.push(axisLabel(L, H2 - 6, "start", "start", "currentColor"));
+  parts.push(axisLabel(W2 - R, H2 - 6, (plan.exact ? "" : "≈ ") + fmtDur(total), "end", "currentColor"));
+
+  if (prog && prog.fraction != null) {
+    const xn = x(prog.fraction * total);
+    parts.push('<line x1="' + xn.toFixed(1) + '" y1="' + (T - 2) + '" x2="' + xn.toFixed(1) + '" y2="' + (H2 - B) +
+      '" stroke="var(--accent)" stroke-width="2.5"/>');
+    parts.push('<text x="' + xn.toFixed(1) + '" y="' + (H2 - 8) +
+      '" text-anchor="middle" font-size="11" font-weight="700" fill="var(--accent)">now</text>');
+  }
+  $("pchart").innerHTML = parts.join("");
+}
+
+/* ---------------- progress bar ---------------- */
+
+function renderProgress(s) {
+  // Load the running test's own plan once per run (also after a reload).
+  if (running && s.run_id && s.run_id !== RUN_ID) {
+    RUN_ID = s.run_id;
+    RUN_PLAN = null;
+    api("/api/plan?current=1").then((p) => { RUN_PLAN = p; }).catch(() => { RUN_PLAN = null; });
+  }
+  if (running) renderPlan(RUN_PLAN || PLAN, s.progress, "");
+  else if (wasRunning) renderPlan(PLAN, null, PLAN_ERR);   // back to the preview
+  wasRunning = running;
+
+  const box = $("progress"), lr = s.last_run;
+  let frac = null, label = "", cls = "";
+  if (running && s.progress) {
+    frac = s.progress.fraction;
+    const seg = RUN_PLAN && RUN_PLAN.segments[s.progress.index];
+    cls = seg ? "k-" + seg.kind : "";
+    const n = RUN_PLAN ? RUN_PLAN.segments.length : "?";
+    const left = s.progress.remaining_s == null ? "" :
+      (s.progress.estimated ? "≈ " : "") + fmtDur(s.progress.remaining_s) + " left";
+    label = "<b>Phase " + (s.progress.index + 1) + " of " + n + ":</b> " + esc(s.progress.label) +
+      (left ? "  ·  " + left : "");
+  } else if (running) {
+    label = "Starting...";
+  } else if (lr && lr.fraction != null) {
+    frac = lr.fraction;
+    cls = lr.status;
+    label = { finished: "<b>Finished.</b>", stopped: "<b>Stopped</b> here.",
+      error: "<b>Ended with an error</b> here." }[lr.status] || esc(lr.status);
+  } else {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const pct = frac == null ? 0 : Math.round(frac * 100);
+  $("pfill").style.width = "calc(" + pct + "% - 4px)";
+  $("pfill").className = "fill " + cls;
+  $("ppct").textContent = frac == null ? "" : pct + "%";
+  $("pbar").setAttribute("aria-valuenow", String(pct));
+  $("plabel").innerHTML = label;
 }
 
 /* ---------------- definition editors ---------------- */

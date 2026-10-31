@@ -47,6 +47,23 @@
   </div>
   <p id="testhint" class="hint"></p>
 
+  <section id="preview" class="preview">
+    <div class="preview-head">
+      <b id="ptitle">Preview</b>
+      <span id="ptotal" class="ptotal"></span>
+    </div>
+    <svg id="pchart" viewBox="0 0 900 170" preserveAspectRatio="none"
+         role="img" aria-label="Planned current over time"></svg>
+    <div class="pkey">
+      <span class="sw sw-dis"></span>discharge
+      <span class="sw sw-chg"></span>charge
+      <span class="sw sw-rest"></span>rest
+      <span class="pkey-note">current against time; dashed = estimated length</span>
+    </div>
+    <div class="ptable-wrap"><table id="ptable"></table></div>
+    <ul id="pnotes" class="pnotes"></ul>
+  </section>
+
   <div class="row">
     <label class="check"><input type="checkbox" id="save" checked> Save data to CSV</label>
     <button id="start" disabled>Start test</button>
@@ -54,6 +71,14 @@
 
   <div id="status" class="status">Not connected.</div>
   <div id="lastrun" class="lastrun" hidden></div>
+
+  <div id="progress" class="progress" hidden>
+    <div class="battery" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="pbar">
+      <div id="pfill" class="fill"></div>
+      <span id="ppct" class="pct"></span>
+    </div>
+    <div id="plabel" class="plabel"></div>
+  </div>
 
   <div class="stats">
     <div><span>Elapsed</span><b id="selapsed">--</b></div>

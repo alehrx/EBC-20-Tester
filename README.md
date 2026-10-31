@@ -93,8 +93,21 @@ The interface has three tabs:
 
 - **Run** - choose the serial port, the cell and the test, then press
   **Start test**. Live voltage and current are shown at the top, with a
-  graph of the run. Data is saved to `results/` exactly as from the
-  terminal (untick *Save data to CSV* for a quick check).
+  graph of the run (show the last 1, 5, 30 or 60 minutes, or everything).
+  Data is saved to `results/` exactly as from the terminal (untick *Save
+  data to CSV* for a quick check).
+  - A **preview** of the selected test on the selected cell shows each
+    phase with its current, its length and what ends it, plus a chart of
+    the planned current. Rests, profile steps and pulse widths are exact.
+    Phases that end on a voltage or a taper current depend on the cell, so
+    their length is an estimate from the capacity, marked with ≈ (assuming
+    a discharge starts full and a charge starts empty).
+  - During a run a **progress bar** shows how far the test has got, the
+    current phase and the estimated time left. The phase is always known
+    exactly, since it comes from the runner itself; only the position
+    inside an estimated phase is estimated. In a CV taper it follows the
+    falling current rather than the clock. When a phase ends earlier than
+    estimated the bar jumps forward; it never moves backwards.
 - **Cells** - create or edit a cell file in `config/cells/`.
 - **Tests** - create or edit a test file in `config/tests/`.
 
@@ -121,9 +134,16 @@ Things worth knowing:
 - The interface is reachable only from this computer, never from the
   network.
 
-On **macOS**, if the Mac refuses to open `start_ebc.command` (only happens
-when the repository was downloaded as a ZIP rather than cloned), right-click
-it, choose **Open**, then **Open** again.
+On **macOS**, keep the repository in your **home folder** (for example
+`~/EBC-20-Tester`), not on the Desktop or in Documents or Downloads. macOS
+privacy protection blocks Terminal and Python from those folders unless you
+grant access, and the launcher then fails with "Operation not permitted".
+To move it, drag the folder in **Finder** (Terminal itself may not be
+allowed to). The launcher detects this case and explains it.
+
+If the Mac refuses to open `start_ebc.command` (only happens when the
+repository was downloaded as a ZIP rather than cloned), right-click it,
+choose **Open**, then **Open** again.
 
 ### From a terminal
 
@@ -418,7 +438,8 @@ characterization sequence; see
 | No ports listed, or the tester is missing from `--list-ports` | The tester is off or unplugged. On **macOS**, a CH340 also needs driver support: macOS 11 and newer include it, older versions need WCH's CH34x driver. Re-plug after installing. |
 | macOS: opening the port hangs | You picked the `/dev/tty.*` name. Use its `/dev/cu.*` twin instead. |
 | Launcher says "No Python 3.10 or newer was found" | Install Python from python.org (on Windows tick *Add python.exe to PATH*) or Anaconda, then double-click again. |
-| Launcher's first start fails while installing | Check the internet connection, delete the `.venv` folder next to the launcher, and double-click again. |
+| Launcher's first start fails while installing | Check the internet connection and double-click again; it finishes the interrupted setup. |
+| macOS: "Operation not permitted" | The folder is on the Desktop or in Documents/Downloads, which macOS protects. Drag it into your home folder in Finder and start again. |
 | Web page: "the port opened but nothing answered" | Wrong port, or the tester is switched off. Pick another port and press Connect. |
 | Web page: "Port 8765 is used by another program" | Something else uses that port. Run `python webui.py --http-port 8766` from `Python/ebc_framework`. |
 
@@ -429,6 +450,7 @@ start_ebc.bat          double-click launcher for the web interface (Windows)
 start_ebc.command      double-click launcher for the web interface (macOS)
 Python/ebc_framework/
   webui.py             browser interface (started by the launchers)
+  ebc/plan.py          test preview and progress estimate used by it
   webui_static/        its page, script and styles
   launchTest.py        command-line entry point
   runTestVSCode.py     VS Code launcher (one test)

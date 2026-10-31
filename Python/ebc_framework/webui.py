@@ -44,6 +44,7 @@ from ebc.celllib import CellLibrary
 from ebc.device import EBCA20
 from ebc.experiment import DataLogger
 from ebc.runner import TestDef
+from ebc.plan import plan_test, progress as plan_progress
 from ebc import protocol as P
 
 STATIC_DIR = os.path.join(HERE, "webui_static")
@@ -104,6 +105,12 @@ class Controller:
         # which goes back to "idle" as soon as the reader resumes -- without
         # this a run that ended on a safety stop would come back looking fine.
         self.last_run = None
+        # Preview of the running test, and the runner's latest progress
+        # report (stage, cycle/phase indices, time in phase).
+        self.plan = None
+        self.runner_state = None
+        self.last_progress = None
+        self.run_id = None
 
     def _push_sample(self, t, v, i) -> None:
         self.samples.append((round(t, 2), round(v, 4), round(i, 4)))
@@ -116,6 +123,15 @@ class Controller:
         with self._lock:
             start = max(since - self.sample_base, 0)
             running = self._thread is not None and self._thread.is_alive()
+            prog = None
+            if self.plan is not None and self.status == "running":
+                try:
+                    prog = plan_progress(self.plan, self.runner_state,
+                                         self.elapsed_s, self.voltage,
+                                         self.current)
+                    self.last_progress = prog
+                except Exception:
+                    prog = self.last_progress   # never break the page over it
             return {
                 "status": self.status,
                 "message": self.message,
@@ -132,6 +148,8 @@ class Controller:
                 "next_index": self.sample_base + len(self.samples),
                 "worker_alive": running,
                 "last_run": self.last_run,
+                "progress": prog,
+                "run_id": self.run_id,
             }
 
     # ---------------- port ----------------
@@ -248,10 +266,17 @@ class Controller:
             thread.join(timeout=20)
         self._abort.clear()
 
+        try:
+            plan = plan_test(test, cell)
+        except Exception:
+            plan = None        # a preview problem must never block a run
+
         with self._lock:
             self._clear(status="running", message="Starting...")
             self.test_name = test.name
             self.cell_id = cell.id
+            self.plan = plan
+            self.run_id = time.time()
 
         self._thread = threading.Thread(
             target=self._run, args=(test, cell, port, save), daemon=True)
@@ -339,6 +364,8 @@ class Controller:
             def save_progress(runner_state: dict) -> None:
                 checkpoint["runner_state"] = copy.deepcopy(runner_state)
                 checkpoint["saved_at_epoch"] = time.time()
+                with controller._lock:
+                    controller.runner_state = checkpoint["runner_state"]
                 if controller._abort.is_set():
                     raise AbortRun()
                 if not save:
@@ -394,6 +421,11 @@ class Controller:
                     "elapsed_s": round(controller.elapsed_s, 1),
                     "cumulative_ah": round(controller.cumulative_ah, 5),
                     "ended": time.strftime("%H:%M:%S"),
+                    # Where the bar stopped: full for a finished run, the
+                    # last estimate for a stopped or failed one.
+                    "fraction": (1.0 if controller.status == "finished"
+                                 else (controller.last_progress or {})
+                                 .get("fraction")),
                 }
             self._stop_idle.clear()
             self._thread = threading.Thread(
@@ -590,6 +622,17 @@ class Handler(BaseHTTPRequestHandler):
                     "tests": list_tests(),
                     "platform": sys.platform,
                 })
+            if path == "/api/plan":
+                q = parse_qs(route.query)
+                if (q.get("current") or [""])[0]:
+                    with self.controller._lock:
+                        plan = self.controller.plan
+                    if plan is None:
+                        return self._json({"error": "no test is running"}, 404)
+                    return self._json(plan.to_dict())
+                test = TestDef.load(LT.resolve_test_path(q["test"][0]))
+                cell = CellLibrary(LT.CELLS_DIR).get(q["cell"][0])
+                return self._json(plan_test(test, cell).to_dict())
             if path == "/api/state":
                 since = int((parse_qs(route.query).get("since") or ["0"])[0])
                 return self._json(self.controller.snapshot(since))

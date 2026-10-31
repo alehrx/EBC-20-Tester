@@ -117,6 +117,61 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .stats b { font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .stats b.path { font-size: 11px; font-weight: 400; word-break: break-all; }
 
+/* ---- preview ---- */
+:root { --chg: #1a7f37; --dis: #d1690a; --rest: #8c959f; }
+@media (prefers-color-scheme: dark) { :root { --chg: #3fb950; --dis: #f0883e; --rest: #6e7681; } }
+.preview {
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  margin-bottom: 14px; background: var(--panel);
+}
+.preview-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.preview-head b { font-size: 14px; }
+.ptotal { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#pchart { width: 100%; height: 170px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.pkey { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 6px 0 8px; }
+.pkey .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; margin-left: 8px; }
+.pkey .sw:first-child { margin-left: 0; }
+.sw-dis { background: var(--dis); } .sw-chg { background: var(--chg); } .sw-rest { background: var(--rest); }
+.pkey-note { margin-left: auto; }
+.ptable-wrap { overflow-x: auto; }
+#ptable { width: 100%; border-collapse: collapse; font-size: 13px; }
+#ptable th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+#ptable td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#ptable td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#ptable tr.active td { background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
+#ptable tr.done td { color: var(--muted); }
+#ptable .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.pnotes { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.pnotes:empty { display: none; }
+
+/* ---- progress bar ---- */
+.progress { margin-bottom: 14px; }
+.battery {
+  position: relative; height: 30px; border: 2px solid var(--fg); border-radius: 7px;
+  margin-right: 8px; background: var(--bg); overflow: visible;
+}
+.battery::after {
+  content: ""; position: absolute; right: -8px; top: 8px; width: 5px; height: 10px;
+  background: var(--fg); border-radius: 0 3px 3px 0;
+}
+.battery .fill {
+  position: absolute; left: 2px; top: 2px; bottom: 2px; width: 0;
+  border-radius: 4px; background: var(--accent); transition: width .8s ease;
+}
+.battery .fill.k-charge { background: var(--chg); }
+.battery .fill.k-discharge, .battery .fill.k-profile, .battery .fill.k-pulses { background: var(--dis); }
+.battery .fill.k-rest { background: var(--rest); }
+.battery .fill.finished { background: var(--chg); }
+.battery .fill.stopped { background: var(--warn); }
+.battery .fill.error { background: var(--bad); }
+.battery .pct {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--fg);
+  text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg);
+}
+.plabel { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.plabel b { color: var(--fg); }
+
 .chartbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .seg button {
