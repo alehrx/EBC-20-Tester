@@ -21,6 +21,10 @@ import launchTest as LT
 HTTP_PORT = 8799
 BASE = "http://127.0.0.1:%d" % HTTP_PORT
 CREATED = []
+# A fixture, not config/tests/connection_test.json: config/tests holds
+# examples users are free to delete.
+CONNECTION_TEST = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "fixtures", "connection_test.json")
 
 
 def get(path):
@@ -83,7 +87,7 @@ def main():
               and body["samples"] == [])
 
         # ---- starting with no port must fail, not hang ----
-        status, body = post("/api/start", {"test": "connection_test"})
+        status, body = post("/api/start", {"test": CONNECTION_TEST})
         check("start without a port is refused",
               status == 400 and "port" in body["error"].lower())
 
@@ -219,7 +223,7 @@ def run_end_to_end():
               snap["voltage"] is not None and 2.5 < snap["voltage"] < 4.3)
 
         # ---- a run to completion, saving ----
-        c.start_test("connection_test", "LP604765", save=True)
+        c.start_test(CONNECTION_TEST,"LP604765", save=True)
         wait_for(c, lambda s: s["status"] == "running", 5, "running")
         seen = []
         deadline = time.time() + 60
@@ -266,7 +270,7 @@ def run_end_to_end():
         with_fake(4.0)          # slow enough to still be running
         c.open_port("FAKE")
         wait_for(c, lambda s: s["status"] == "idle", 10, "idle again")
-        c.start_test("connection_test", "LP604765", save=False)
+        c.start_test(CONNECTION_TEST,"LP604765", save=False)
         # Stop only once the main phase is driving its 0.5 A, so there is
         # real charge to account for (the startup rest is at 0 A).
         wait_for(c, lambda s: sum(1 for x in s["samples"]
@@ -304,7 +308,7 @@ def run_end_to_end():
                   "wrong port" in snap["message"].lower())
             refused = False
             try:
-                c.start_test("connection_test", "LP604765", save=False)
+                c.start_test(CONNECTION_TEST,"LP604765", save=False)
             except RuntimeError:
                 refused = True
             check("cannot start a test on a port that never answered",

@@ -16,6 +16,11 @@ import _paths  # noqa: F401  (adds framework root to sys.path)
 import launchTest
 from fake_tester import fake_device
 
+# A fixture, not config/tests/connection_test.json: config/tests holds
+# examples users are free to delete.
+CONNECTION_TEST = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "fixtures", "connection_test.json")
+
 
 def run(argv: list[str]):
     original = launchTest.EBCA20.on_serial
@@ -41,7 +46,7 @@ def results_snapshot() -> set[str]:
 def check_saved_run() -> None:
     with tempfile.TemporaryDirectory() as folder:
         csv_path = os.path.join(folder, "saved.csv")
-        result, _ = run(["connection_test", "--cell", "LP604765",
+        result, _ = run([CONNECTION_TEST, "--cell", "LP604765",
                          "--port", "FAKE", "--out", csv_path])
         assert result is not None and result.samples > 0, result
         for suffix in (".csv", "_meta.json", "_checkpoint.json"):
@@ -54,7 +59,7 @@ def check_saved_run() -> None:
 
 def check_unsaved_run() -> None:
     before = results_snapshot()
-    result, printed = run(["connection_test", "--cell", "LP604765",
+    result, printed = run([CONNECTION_TEST, "--cell", "LP604765",
                            "--port", "FAKE", "--no-save"])
     assert result is not None and result.samples > 0, result
     assert "NOT SAVED" in printed

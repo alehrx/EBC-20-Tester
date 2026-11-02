@@ -132,7 +132,8 @@ from ebc import DataLogger as DL
 _lib = CellLibrary(os.path.join(SCRIPT_DIR, "config", "cells"))
 print(f"  cells loaded: {', '.join(_lib.ids())}")
 
-_cfg = os.path.join(SCRIPT_DIR, "config", "tests")
+# Fixtures, not config/tests: those are examples users edit and delete.
+_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 _cases = [
     ("rest.json",             {"cell": "LP604765",
                                 "max_duration_s": 5}, 100.0,  0.7),

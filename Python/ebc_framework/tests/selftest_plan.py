@@ -14,8 +14,12 @@ FW = os.path.dirname(HERE)
 LIB = CellLibrary(os.path.join(FW, "config", "cells"))
 
 
+FIXTURES = os.path.join(HERE, "fixtures")
+
+
 def test_def(name):
-    return TestDef.load(os.path.join(FW, "config", "tests", name + ".json"))
+    # Fixtures, not config/tests: those are examples users edit and delete.
+    return TestDef.load(os.path.join(FIXTURES, name + ".json"))
 
 
 def check(label, cond, detail=""):
@@ -25,8 +29,10 @@ def check(label, cond, detail=""):
 
 
 def every_config_plans():
+    # Whatever test files the user currently keeps, plus the fixtures.
     paths = sorted(glob.glob(os.path.join(FW, "config", "tests", "**", "*.json"),
-                             recursive=True))
+                             recursive=True)
+                   + glob.glob(os.path.join(FIXTURES, "*.json")))
     count = 0
     for cid in LIB.ids():
         cell = LIB.get(cid)
