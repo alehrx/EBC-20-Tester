@@ -32,3 +32,4 @@ Python/ebc_framework/runTestWithBMSVSCode.py
 
 # Private Python environment created by start_ebc.bat / start_ebc.command
 .venv/
+.DS_Store
