@@ -111,6 +111,12 @@ class Controller:
         self.runner_state = None
         self.last_progress = None
         self.run_id = None
+        # The tester regularly stops reporting for a few seconds while it
+        # keeps the setpoint. Track it so the page can say so instead of
+        # simply freezing.
+        self.last_sample_wall = None
+        self.quiet_count = 0
+        self.quiet_longest_s = 0.0
 
     def _push_sample(self, t, v, i) -> None:
         self.samples.append((round(t, 2), round(v, 4), round(i, 4)))
@@ -150,6 +156,11 @@ class Controller:
                 "last_run": self.last_run,
                 "progress": prog,
                 "run_id": self.run_id,
+                "stale_s": (round(time.time() - self.last_sample_wall, 1)
+                            if self.status == "running"
+                            and self.last_sample_wall else None),
+                "quiet_count": self.quiet_count,
+                "quiet_longest_s": round(self.quiet_longest_s, 1),
             }
 
     # ---------------- port ----------------
@@ -337,7 +348,15 @@ class Controller:
                             self._cum_ah += self._last_i * dt / 3600.0
                     self._last_t = t_elapsed
                     self._last_i = m.signed_current
+                    now = time.time()
                     with controller._lock:
+                        if controller.last_sample_wall is not None:
+                            gap = now - controller.last_sample_wall
+                            if gap > 5.0:
+                                controller.quiet_count += 1
+                                controller.quiet_longest_s = max(
+                                    controller.quiet_longest_s, gap)
+                        controller.last_sample_wall = now
                         controller.voltage = m.voltage
                         controller.current = m.signed_current
                         controller.mode = m.mode
@@ -426,6 +445,8 @@ class Controller:
                     "fraction": (1.0 if controller.status == "finished"
                                  else (controller.last_progress or {})
                                  .get("fraction")),
+                    "quiet_count": controller.quiet_count,
+                    "quiet_longest_s": round(controller.quiet_longest_s, 1),
                 }
             self._stop_idle.clear()
             self._thread = threading.Thread(

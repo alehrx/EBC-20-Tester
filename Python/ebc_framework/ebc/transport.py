@@ -83,6 +83,12 @@ class SerialTransport:
             timeout=timeout,
         )
         self._reasm = FrameReassembler()
+        # Running totals of what the line delivered. The device diffs them
+        # across a quiet period to say what it was: nothing at all (a silent
+        # tester or a stalled USB link), valid frames that carry no
+        # measurement, or garbled bytes.
+        self.stats = {"bytes": 0, "frames": 0, "valid": 0, "invalid": 0,
+                      "by_type": {}}
 
     def write(self, frame: bytes) -> None:
         self._ser.write(frame)
@@ -91,7 +97,16 @@ class SerialTransport:
     def read_frames(self) -> Iterator[bytes]:
         data = self._ser.read(256)
         if data:
-            yield from self._reasm.feed(data)
+            self.stats["bytes"] += len(data)
+            for frame in self._reasm.feed(data):
+                self.stats["frames"] += 1
+                if P.frame_is_valid(frame):
+                    self.stats["valid"] += 1
+                    by_type = self.stats["by_type"]
+                    by_type[frame[1]] = by_type.get(frame[1], 0) + 1
+                else:
+                    self.stats["invalid"] += 1
+                yield frame
 
     def close(self) -> None:
         try:

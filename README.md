@@ -200,8 +200,16 @@ and asks you to type `RUN` before starting.
 - **To stop:** press **Ctrl-C** in the terminal. This sends STOP to the
   tester. Don't use VS Code's red stop button, because Python may be killed
   before it can send STOP.
-- **USB drop:** if the USB link drops, the script reconnects automatically
-  and continues the run.
+- **Quiet periods:** every few minutes the tester stops reporting for a few
+  seconds while it keeps driving the current. The software waits up to
+  60 s for readings to come back (the cell stays protected by the cutoffs
+  carried in each command), prints a `[link] no readings for ...` line
+  saying what arrived meanwhile, and repeats the current command every
+  60 s to keep the tester talking. The repeat changes nothing on the
+  tester: it ignores a start command while already running.
+- **USB drop:** if readings stay away for longer than 60 s, or the USB
+  adapter disappears, the script reconnects automatically and continues
+  the run after the usual 10-second safety restart.
 
 ### Output files
 

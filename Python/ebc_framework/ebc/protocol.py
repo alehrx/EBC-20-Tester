@@ -201,6 +201,18 @@ def _mode_for_pt(pt: int) -> str:
     return "unknown"
 
 
+def frame_is_valid(frame: bytes) -> bool:
+    """A complete 19-byte frame with intact delimiters and checksum.
+
+    True for every frame type, including the firmware-report frames that
+    parse_status() deliberately skips. Used to tell a tester that is
+    talking (but not sending measurements) from a line that is silent or
+    garbled.
+    """
+    return (len(frame) == 19 and frame[0] == SOF and frame[18] == EOF
+            and crc(frame[1:17]) == frame[17])
+
+
 def parse_status(frame: bytes) -> Measurement | None:
     """
     Parse a full 19-byte status frame (SOF..EOF). Returns None if the frame

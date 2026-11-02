@@ -50,6 +50,12 @@ class EBCA20:
     COMMAND_CONFIRM_SAMPLES = 2
     COMMAND_MAX_RETRIES = 3
     MAX_POLL_INTERVAL_S = 1.0
+    # Quiet periods longer than this are reported on the console, with what
+    # the line delivered meanwhile.
+    QUIET_REPORT_S = 5.0
+    # Repeat the current command this often (see _maybe_keepalive). 0 or
+    # None turns it off.
+    KEEPALIVE_S = 60.0
 
     def __init__(self, transport, limits: Optional[SafetyLimits] = None):
         self._t = transport
@@ -57,15 +63,89 @@ class EBCA20:
         self._last: Optional[P.Measurement] = None
         self._stopped_reason: Optional[str] = None
         self._desired_signed_a = 0.0
+        self.quiet_periods: list[float] = []
+        self._last_command: Optional[bytes] = None
+        self._last_write_wall = time.time()
+        self.keepalives = 0
+
+    def _line_stats(self) -> Optional[dict]:
+        stats = getattr(self._t, "stats", None)
+        if stats is None:
+            return None
+        snap = dict(stats)
+        snap["by_type"] = dict(stats.get("by_type", {}))
+        return snap
+
+    @staticmethod
+    def describe_line(before: Optional[dict], after: Optional[dict]) -> str:
+        """What arrived on the serial line between two stats snapshots."""
+        if before is None or after is None:
+            return "line statistics unavailable"
+        n_bytes = after["bytes"] - before["bytes"]
+        if n_bytes == 0:
+            return "nothing at all arrived, 0 bytes"
+        parts = ["%d bytes" % n_bytes]
+        types = {k: after["by_type"].get(k, 0) - before["by_type"].get(k, 0)
+                 for k in after["by_type"]}
+        types = {k: v for k, v in types.items() if v}
+        if types:
+            parts.append("valid frames " + ", ".join(
+                "0x%02x x%d" % (k, v) for k, v in sorted(types.items())))
+        invalid = after["invalid"] - before["invalid"]
+        if invalid:
+            parts.append("%d unreadable frame(s)" % invalid)
+        if not types and not invalid:
+            parts.append("no complete frame")
+        return ", ".join(parts)
 
     # ---- construction helpers ----
     @classmethod
     def on_serial(cls, port: str, limits: Optional[SafetyLimits] = None):
         return cls(SerialTransport(port), limits)
 
+    def _send(self, frame: bytes, command: bool = True) -> None:
+        """Write a frame; remember it if it sets the tester's state."""
+        self._t.write(frame)
+        self._last_write_wall = time.time()
+        if command:
+            self._last_command = frame
+
+    def _maybe_keepalive(self, m: P.Measurement) -> None:
+        """Re-send the current command if the line has been quiet from our side.
+
+        The tester stops reporting for a few seconds every few minutes, and
+        those gaps cluster in long stretches with no command from the PC (a
+        CC phase, a rest) -- never inside a profile that sends a command
+        every few seconds. So the identical command frame is repeated every
+        KEEPALIVE_S. It changes nothing on the tester: a start frame sent
+        while it is already running is ignored (confirmed 2026-07-01), and a
+        STOP while idle is a no-op. It is sent alone -- never as STOP plus
+        start, which would itself interrupt the current.
+
+        Only sent when this reading confirms the tester is in the commanded
+        state, and in its *running* state for a charge or discharge, so it
+        can never restart a phase the tester ended on its own cutoff.
+        """
+        if not self.KEEPALIVE_S or self._last_command is None:
+            return
+        if time.time() - self._last_write_wall < self.KEEPALIVE_S:
+            return
+        desired = self._desired_signed_a
+        if desired > 0 and m.pt != P.PT_STATUS_CHARGE_RUN:
+            return
+        if desired < 0 and m.pt != P.PT_STATUS_DISCHARGE_RUN:
+            return
+        if desired == 0 and abs(m.current) > 0.03:
+            return
+        if not self.keepalives:
+            print("  [link] repeating the current command every %g s to keep "
+                  "the tester talking" % self.KEEPALIVE_S, flush=True)
+        self._send(self._last_command)
+        self.keepalives += 1
+
     # ---- lifecycle ----
     def connect(self) -> None:
-        self._t.write(P.build_connect())
+        self._send(P.build_connect(), command=False)
 
     def disconnect(self) -> None:
         """Best-effort goodbye, but the transport MUST close either way.
@@ -80,7 +160,7 @@ class EBCA20:
         """
         try:
             self.stop()
-            self._t.write(P.build_disconnect())
+            self._send(P.build_disconnect(), command=False)
         finally:
             self._t.close()
 
@@ -97,14 +177,14 @@ class EBCA20:
             current_a, self.limits.i_max_discharge, P.EBC_MAX_DISCHARGE_A,
             "discharge")
         self._desired_signed_a = -current_a
-        self._t.write(P.build_start_discharge(
+        self._send(P.build_start_discharge(
             current_a, cutoff_v=self.limits.discharge_cutoff_v))
 
     def set_charge(self, current_a: float) -> None:
         current_a = self._clamp_current(
             current_a, self.limits.i_max_charge, P.EBC_MAX_CHARGE_A, "charge")
         self._desired_signed_a = current_a
-        self._t.write(P.build_start_charge(
+        self._send(P.build_start_charge(
             current_a, charge_v=self.limits.charge_cv,
             cutoff_a=self.limits.charge_taper_a))
 
@@ -130,7 +210,7 @@ class EBCA20:
 
     def stop(self) -> None:
         self._desired_signed_a = 0.0
-        self._t.write(P.build_stop())
+        self._send(P.build_stop())
 
     def _command_is_coherent(self, m: P.Measurement) -> bool:
         """Whether a measurement agrees with the last requested operating state."""
@@ -221,7 +301,7 @@ class EBCA20:
     def run(self, controller: Callable[[P.Measurement, float], Optional[float]],
             period_s: float = 1.0, max_duration_s: Optional[float] = None,
             on_sample: Optional[Callable[[P.Measurement, float], None]] = None,
-            no_response_timeout_s: Optional[float] = 15.0
+            no_response_timeout_s: Optional[float] = 60.0
             ) -> str:
         """
         Generic control loop.
@@ -245,6 +325,18 @@ class EBCA20:
         this (the offline test fake, and any caller that truly wants to wait
         indefinitely, e.g. a deliberately unattended long rest phase).
 
+        The default was 15 s and is now 60 s. The tester regularly stops
+        reporting for a few seconds while it keeps driving the commanded
+        current: in 14 out of 14 such gaps on 2026-10-27 the current was
+        unchanged across the gap and the voltage moved by millivolts, where
+        a stop would have relaxed it by 100-200 mV. Gaps ran from 4 s to at
+        least 16 s, so a 15 s limit turned the long ones into a STOP and a
+        full restart -- the "stop and go" spikes in the data, every few
+        minutes on both Windows and macOS. During a gap the cell stays
+        protected by the cutoffs carried in every command; a USB adapter
+        that actually disappears raises from pyserial at once, with no
+        timeout involved. Startup checks keep their own 5 s limit.
+
         ``period_s`` controls controller/logging samples, not receive polling.
         Link and safety checks run at least every MAX_POLL_INTERVAL_S on real
         hardware, so a long CSV sampling period cannot trip the watchdog.
@@ -264,6 +356,7 @@ class EBCA20:
                 max(float(no_response_timeout_s) / 3.0, 0.01))
         next_sample = t0
         last_response_wall = t0
+        line_at_response = self._line_stats()
         mismatch_samples = 0
         coherent_samples = 0
         command_retries = 0
@@ -278,7 +371,17 @@ class EBCA20:
             m = self.poll()
             if m is not None:
                 sample_wall = time.time()
+                quiet_s = sample_wall - last_response_wall
+                if quiet_s > self.QUIET_REPORT_S:
+                    self.quiet_periods.append(round(quiet_s, 1))
+                    print("  [link] no readings for %.1f s, then they resumed "
+                          "(%s); current now %+.3f A" % (
+                              quiet_s,
+                              self.describe_line(line_at_response,
+                                                 self._line_stats()),
+                              m.signed_current), flush=True)
                 last_response_wall = sample_wall
+                line_at_response = self._line_stats()
                 reason = self.check_safety(m)
                 if reason is not None:
                     self.stop()
@@ -311,6 +414,7 @@ class EBCA20:
                     coherent_samples += 1
                     if coherent_samples >= self.COMMAND_CONFIRM_SAMPLES:
                         command_retries = 0
+                    self._maybe_keepalive(m)
                 else:
                     coherent_samples = 0
                     mismatch_samples += 1
@@ -337,7 +441,8 @@ class EBCA20:
                     and now - last_response_wall >= no_response_timeout_s):
                 raise OSError(
                     f"no response from device within {no_response_timeout_s:g}s "
-                    "-- the serial link is open but nothing valid is coming "
+                    f"({self.describe_line(line_at_response, self._line_stats())})"
+                    " -- the serial link is open but no measurement is coming "
                     "back (check the COM port and that the device is "
                     "powered on and linked)")
 

@@ -215,7 +215,16 @@ function render(s) {
     disconnected: "Not connected. Choose the tester's port and press Connect.",
     connecting: "Opening the port...",
   }[s.status] || "-";
-  flash($("status"), s.message || fallback, s.status === "error");
+  if (running && s.stale_s != null && s.stale_s > 5) {
+    // The tester goes quiet now and then while it keeps its setpoint; say
+    // so rather than letting the page look frozen.
+    flash($("status"), "No readings from the tester for " + Math.round(s.stale_s) +
+      " s. It keeps the current setpoint meanwhile; the software reconnects only after 60 s.", false);
+    $("status").classList.add("warn");
+  } else {
+    $("status").classList.remove("warn");
+    flash($("status"), s.message || fallback, s.status === "error");
+  }
   const lr = s.last_run;
   const box = $("lastrun");
   if (lr && !running) {
@@ -503,6 +512,12 @@ function renderProgress(s) {
   $("pfill").className = "fill " + cls;
   $("ppct").textContent = frac == null ? "" : pct + "%";
   $("pbar").setAttribute("aria-valuenow", String(pct));
+  const quiet = running ? s.quiet_count : (lr ? lr.quiet_count : 0);
+  const longest = running ? s.quiet_longest_s : (lr ? lr.quiet_longest_s : 0);
+  if (quiet) {
+    label += '<br><span class="quietnote">The tester went quiet ' + quiet + (quiet === 1 ? " time" : " times") +
+      " (longest " + Math.round(longest) + " s).</span>";
+  }
   $("plabel").innerHTML = label;
 }
 
