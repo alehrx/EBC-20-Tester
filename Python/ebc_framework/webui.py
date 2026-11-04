@@ -263,7 +263,8 @@ class Controller:
         if not port:
             raise RuntimeError("no serial port selected")
 
-        test = TestDef.load(LT.resolve_test_path(test_value))
+        test_path = os.path.abspath(LT.resolve_test_path(test_value))
+        test = TestDef.load(test_path)
         library = CellLibrary(self._cells_dir)
         chosen = cell_id or test.cell_id
         if not chosen:
@@ -290,13 +291,14 @@ class Controller:
             self.run_id = time.time()
 
         self._thread = threading.Thread(
-            target=self._run, args=(test, cell, port, save), daemon=True)
+            target=self._run, args=(test, test_path, cell, port, save),
+            daemon=True)
         self._thread.start()
 
     def request_stop(self) -> None:
         self._abort.set()
 
-    def _run(self, test, cell, port: str, save: bool) -> None:
+    def _run(self, test, test_path: str, cell, port: str, save: bool) -> None:
         controller = self
         out = None
         checkpoint_path = None
@@ -375,9 +377,22 @@ class Controller:
                     self._inner.close()
 
             logger = UILogger(real_logger)
-            checkpoint = {"csv_path": out, "test": test.raw,
-                          "cell_id": cell.id, "runner_state": {},
-                          "complete": False}
+            # Same format as launchTest.py writes, so a run started here can
+            # be resumed with `launchTest.py --resume <csv>`. It used to lack
+            # test_path, so --resume failed on any run started from the page.
+            # csv_path is "" when not saving, as the CLI writes it.
+            checkpoint = {
+                "version": 1,
+                "complete": False,
+                "test_path": test_path,
+                "cell_id": cell.id,
+                "csv_path": os.path.abspath(out) if out else "",
+                "runner_state": {"stage": "not_started", "csv_elapsed_s": 0.0},
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "started_from": "webui",
+            }
+            if save:
+                LT.write_json_atomic(checkpoint_path, checkpoint)
             last_write = {"wall": 0.0, "stage": None}
 
             def save_progress(runner_state: dict) -> None:
@@ -416,6 +431,13 @@ class Controller:
                     controller.status = "finished"
                     controller.message = str(getattr(result, "reason",
                                                      "complete"))
+            if save and controller.status == "finished":
+                # A finished run must not be resumable by accident; a
+                # stopped or failed one stays resumable, as on the CLI.
+                checkpoint["complete"] = True
+                checkpoint["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                checkpoint["result_reason"] = controller.message
+                LT.write_json_atomic(checkpoint_path, checkpoint)
         except AbortRun:
             with controller._lock:
                 controller.status = "stopped"

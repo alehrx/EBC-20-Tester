@@ -1,0 +1,23 @@
+{
+  "name": "1c_cycling",
+  "type": "protocol",
+  "description": "Repeated 1C cycles: 1C discharge to 3.0 V, rest, 1C CC-CV charge to 4.2 V, rest",
+  "sample_period_s": 1,
+  "max_duration_s": 7200,
+  "repeat": 10,
+  "order": ["discharge", "charge"],
+  "discharge": {
+    "protocol": "crate",
+    "c_rate": 1,
+    "v_min": 3.0,
+    "rest_after_s": 600
+  },
+  "charge": {
+    "protocol": "cc_cv",
+    "c_rate": 1,
+    "v_max": 4.2,
+    "cutoff_c": 0.05,
+    "rest_after_s": 600
+  },
+  "comment": "Same settings as 1c_discharge_charge_cycle, repeated. Start from a full cell (as after any of the discharge/charge cycles), so every discharge runs full to 3.0 V and is a capacity measurement; the run ends charged. Change 'repeat' for more or fewer cycles. max_duration_s is a safety ceiling per phase, not for the whole run. No cell is named: pick it when launching."
+}
