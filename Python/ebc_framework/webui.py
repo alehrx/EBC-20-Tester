@@ -771,6 +771,31 @@ def install_close_hooks(controller) -> None:
                 signal.signal(getattr(signal, name), on_signal)
 
 
+PORT_SEARCH = 10      # try this many ports from the requested one upwards
+
+
+def find_server(start_port: int, tries: int = PORT_SEARCH):
+    """Bind the first free port, unless our own interface already answers.
+
+    8765 is a popular port for local development servers, and a launcher
+    that is double-clicked cannot be restarted with a flag. So: walk up
+    from the requested port; where a port is taken, check whether it is our
+    interface (then reuse it rather than start a second copy that would
+    fight it for the serial port) or something else (then keep looking).
+
+    Returns (server, url) for a fresh bind, (None, url) when our interface
+    is already running at url, or (None, None) when nothing in range works.
+    """
+    for port in range(start_port, start_port + tries):
+        url = "http://127.0.0.1:%d/" % port
+        try:
+            return LocalServer(("127.0.0.1", port), Handler), url
+        except OSError:
+            if already_running(url):
+                return None, url
+    return None, None
+
+
 def already_running(url: str) -> bool:
     """Is our own interface already answering on this port?"""
     import urllib.request
@@ -790,24 +815,26 @@ def main(argv=None):
     ap.add_argument("--no-browser", action="store_true",
                     help="do not open a browser window")
     args = ap.parse_args(argv)
-    url = "http://127.0.0.1:%d/" % args.http_port
 
     controller = Controller(LT.CELLS_DIR)
     Handler.controller = controller
 
     # Loopback only: never expose current control to the network.
-    try:
-        server = LocalServer(("127.0.0.1", args.http_port), Handler)
-    except OSError:
-        if already_running(url):
-            # A second double-click on the launcher: reuse the first one.
-            print("The interface is already running; opening it: %s" % url)
-            if not args.no_browser:
-                webbrowser.open(url)
-            return 0
-        print("Port %d is used by another program. Start with "
-              "--http-port 8766 (or any free port)." % args.http_port)
+    server, url = find_server(args.http_port)
+    if server is None and url is not None:
+        # A second double-click on the launcher: reuse the first one.
+        print("The interface is already running; opening it: %s" % url)
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
+    if server is None:
+        print("Ports %d-%d are all used by other programs. Start with "
+              "--http-port and a free port number."
+              % (args.http_port, args.http_port + PORT_SEARCH - 1))
         return 1
+    if not url.endswith(":%d/" % args.http_port):
+        print("Port %d is used by another program; using %s instead."
+              % (args.http_port, url))
 
     if args.port:
         controller.open_port(args.port)

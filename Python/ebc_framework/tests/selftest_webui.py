@@ -350,7 +350,49 @@ def run_port_exclusivity():
     print("    PORT EXCLUSIVITY CHECKS PASSED")
 
 
+def run_port_fallback():
+    """Port taken by another program: move up. Taken by us: reuse it.
+
+    Regression for 2026-11-04, when a leftover preview server from an
+    unrelated project held 8765 and the double-clicked launcher could only
+    tell the user to restart it with --http-port.
+    """
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    print("    port fallback:")
+    webui.Handler.controller = webui.Controller(LT.CELLS_DIR)
+
+    foreign_port = HTTP_PORT + 3
+    foreign = HTTPServer(("127.0.0.1", foreign_port), SimpleHTTPRequestHandler)
+    threading.Thread(target=foreign.serve_forever, daemon=True).start()
+    try:
+        server, url = webui.find_server(foreign_port)
+        try:
+            check("port held by another program -> the next one is used",
+                  server is not None and url.endswith(":%d/" % (foreign_port + 1)),
+                  url)
+        finally:
+            if server is not None:
+                server.server_close()
+    finally:
+        foreign.shutdown()
+        foreign.server_close()
+
+    ours_port = HTTP_PORT + 6
+    ours = webui.LocalServer(("127.0.0.1", ours_port), webui.Handler)
+    threading.Thread(target=ours.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        server, url = webui.find_server(ours_port)
+        check("port held by our own interface -> reuse it, start no second copy",
+              server is None and url.endswith(":%d/" % ours_port), url)
+    finally:
+        ours.shutdown()
+        ours.server_close()
+    print("    PORT FALLBACK CHECKS PASSED")
+
+
 if __name__ == "__main__":
     main()
     run_end_to_end()
     run_port_exclusivity()
+    run_port_fallback()
