@@ -449,7 +449,7 @@ characterization sequence; see
 | Launcher's first start fails while installing | Check the internet connection and double-click again; it finishes the interrupted setup. |
 | macOS: "Operation not permitted" | The folder is on the Desktop or in Documents/Downloads, which macOS protects. Drag it into your home folder in Finder and start again. |
 | Web page: "the port opened but nothing answered" | Wrong port, or the tester is switched off. Pick another port and press Connect. |
-| Web page: "Port 8765 is used by another program" | Something else uses that port. Run `python webui.py --http-port 8766` from `Python/ebc_framework`. |
+| Web page opens on 8766 (or higher) instead of 8765 | Another program already uses 8765; the launcher picks the next free port by itself. Nothing to do. |
 
 ## Repository layout
 

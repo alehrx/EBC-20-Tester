@@ -350,7 +350,164 @@ def run_port_exclusivity():
     print("    PORT EXCLUSIVITY CHECKS PASSED")
 
 
+def run_port_fallback():
+    """Port taken by another program: move up. Taken by us: reuse it.
+
+    Regression for 2026-11-04, when a leftover preview server from an
+    unrelated project held 8765 and the double-clicked launcher could only
+    tell the user to restart it with --http-port.
+    """
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    print("    port fallback:")
+    webui.Handler.controller = webui.Controller(LT.CELLS_DIR)
+
+    foreign_port = HTTP_PORT + 3
+    foreign = HTTPServer(("127.0.0.1", foreign_port), SimpleHTTPRequestHandler)
+    threading.Thread(target=foreign.serve_forever, daemon=True).start()
+    try:
+        server, url = webui.find_server(foreign_port)
+        try:
+            check("port held by another program -> the next one is used",
+                  server is not None and url.endswith(":%d/" % (foreign_port + 1)),
+                  url)
+        finally:
+            if server is not None:
+                server.server_close()
+    finally:
+        foreign.shutdown()
+        foreign.server_close()
+
+    ours_port = HTTP_PORT + 6
+    ours = webui.LocalServer(("127.0.0.1", ours_port), webui.Handler)
+    threading.Thread(target=ours.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        server, url = webui.find_server(ours_port)
+        check("port held by our own interface -> reuse it, start no second copy",
+              server is None and url.endswith(":%d/" % ours_port), url)
+    finally:
+        ours.shutdown()
+        ours.server_close()
+    print("    PORT FALLBACK CHECKS PASSED")
+
+
+class DropsOnce:
+    """Wraps the emulated tester; the first run device loses the link once."""
+
+    dropped = False
+
+    def __init__(self, inner, drop_after):
+        self._inner = inner
+        self._reads = 0
+        self._drop_after = drop_after
+        self.time_accel = inner.time_accel
+
+    def write(self, frame):
+        self._inner.write(frame)
+
+    def close(self):
+        self._inner.close()
+
+    def read_frames(self):
+        self._reads += 1
+        if not DropsOnce.dropped and self._reads > self._drop_after:
+            DropsOnce.dropped = True
+            raise OSError("simulated USB drop")
+        return self._inner.read_frames()
+
+
+def run_resume_and_reconnect():
+    """Web-page runs survive a reconnect unsaved, and resume when saved."""
+    import contextlib
+    import io
+    from ebc.device import EBCA20
+    from fake_tester import SimulatorTransport, fake_device
+    print("    reconnect and resume:")
+    original = webui.EBCA20.on_serial
+    created = []
+    try:
+        # ---- an unsaved run must survive an automatic reconnect ----
+        DropsOnce.dropped = False
+
+        def flaky(cls, port, limits=None):
+            sim = SimulatorTransport(capacity_ah=1.9, soc0=0.6,
+                                     emit_period_s=0.0, time_accel=40.0)
+            # Only run devices (they carry limits) drop; the idle reader
+            # must stay healthy so the run can start at all.
+            return EBCA20(DropsOnce(sim, 40) if limits is not None else sim,
+                          limits)
+        webui.EBCA20.on_serial = classmethod(flaky)
+        c = webui.Controller(LT.CELLS_DIR)
+        c.open_port("FAKE")
+        wait_for(c, lambda s: s["status"] == "idle", 10, "idle")
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            c.start_test(CONNECTION_TEST, "LP604765", save=False)
+            snap = wait_for(c, lambda s: s["last_run"] is not None, 90,
+                            "unsaved run with a drop")
+        check("an unsaved run survives an automatic reconnect",
+              DropsOnce.dropped and snap["last_run"]["status"] == "finished",
+              snap["last_run"])
+        c.close_port()
+
+        # ---- a stopped, saved run can be resumed from the command line ----
+        with_fake(4.0)
+        c = webui.Controller(LT.CELLS_DIR)
+        c.open_port("FAKE")
+        wait_for(c, lambda s: s["status"] == "idle", 10, "idle")
+        with contextlib.redirect_stdout(io.StringIO()):
+            c.start_test(CONNECTION_TEST, "LP604765", save=True)
+            wait_for(c, lambda s: sum(1 for x in s["samples"]
+                                      if abs(x[2]) >= 0.4) >= 3,
+                     60, "main-phase current")
+            c.request_stop()
+            snap = wait_for(c, lambda s: s["last_run"] is not None, 20,
+                            "stopped")
+        csv_path = snap["last_run"]["csv"]
+        created.append(csv_path)
+        c.close_port()
+        ck = json.load(open(csv_path[:-4] + "_checkpoint.json",
+                            encoding="utf-8"))
+        check("its checkpoint names the test file and the cell, like the CLI's",
+              ck.get("test_path", "").endswith("connection_test.json")
+              and ck.get("cell_id") == "LP604765"
+              and ck.get("complete") is False, ck)
+
+        launch = __import__("launchTest")
+        launch.EBCA20.on_serial = classmethod(
+            lambda cls, port, limits=None: fake_device(
+                limits=limits, capacity_ah=1.9, soc0=0.6, emit_period_s=0.0,
+                time_accel=40.0))
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = launch.main(["--resume", csv_path, "--port", "FAKE"])
+        check("launchTest.py --resume finishes it",
+              result is not None and result.samples > 0, result)
+        ck = json.load(open(csv_path[:-4] + "_checkpoint.json",
+                            encoding="utf-8"))
+        check("and marks it complete", ck.get("complete") is True, ck)
+
+        refused = False
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                launch.main(["--resume", csv_path, "--port", "FAKE"])
+        except SystemExit:
+            refused = True
+        check("a completed run cannot be resumed again", refused)
+    finally:
+        webui.EBCA20.on_serial = original
+        for path in created:
+            for suffix in (".csv", "_meta.json", "_checkpoint.json"):
+                try:
+                    os.remove(path[:-4] + suffix)
+                except OSError:
+                    pass
+    print("    RECONNECT AND RESUME CHECKS PASSED")
+
+
 if __name__ == "__main__":
     main()
     run_end_to_end()
     run_port_exclusivity()
+    run_port_fallback()
+    run_resume_and_reconnect()

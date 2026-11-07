@@ -263,7 +263,8 @@ class Controller:
         if not port:
             raise RuntimeError("no serial port selected")
 
-        test = TestDef.load(LT.resolve_test_path(test_value))
+        test_path = os.path.abspath(LT.resolve_test_path(test_value))
+        test = TestDef.load(test_path)
         library = CellLibrary(self._cells_dir)
         chosen = cell_id or test.cell_id
         if not chosen:
@@ -290,13 +291,14 @@ class Controller:
             self.run_id = time.time()
 
         self._thread = threading.Thread(
-            target=self._run, args=(test, cell, port, save), daemon=True)
+            target=self._run, args=(test, test_path, cell, port, save),
+            daemon=True)
         self._thread.start()
 
     def request_stop(self) -> None:
         self._abort.set()
 
-    def _run(self, test, cell, port: str, save: bool) -> None:
+    def _run(self, test, test_path: str, cell, port: str, save: bool) -> None:
         controller = self
         out = None
         checkpoint_path = None
@@ -375,9 +377,22 @@ class Controller:
                     self._inner.close()
 
             logger = UILogger(real_logger)
-            checkpoint = {"csv_path": out, "test": test.raw,
-                          "cell_id": cell.id, "runner_state": {},
-                          "complete": False}
+            # Same format as launchTest.py writes, so a run started here can
+            # be resumed with `launchTest.py --resume <csv>`. It used to lack
+            # test_path, so --resume failed on any run started from the page.
+            # csv_path is "" when not saving, as the CLI writes it.
+            checkpoint = {
+                "version": 1,
+                "complete": False,
+                "test_path": test_path,
+                "cell_id": cell.id,
+                "csv_path": os.path.abspath(out) if out else "",
+                "runner_state": {"stage": "not_started", "csv_elapsed_s": 0.0},
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "started_from": "webui",
+            }
+            if save:
+                LT.write_json_atomic(checkpoint_path, checkpoint)
             last_write = {"wall": 0.0, "stage": None}
 
             def save_progress(runner_state: dict) -> None:
@@ -416,6 +431,13 @@ class Controller:
                     controller.status = "finished"
                     controller.message = str(getattr(result, "reason",
                                                      "complete"))
+            if save and controller.status == "finished":
+                # A finished run must not be resumable by accident; a
+                # stopped or failed one stays resumable, as on the CLI.
+                checkpoint["complete"] = True
+                checkpoint["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                checkpoint["result_reason"] = controller.message
+                LT.write_json_atomic(checkpoint_path, checkpoint)
         except AbortRun:
             with controller._lock:
                 controller.status = "stopped"
@@ -771,6 +793,31 @@ def install_close_hooks(controller) -> None:
                 signal.signal(getattr(signal, name), on_signal)
 
 
+PORT_SEARCH = 10      # try this many ports from the requested one upwards
+
+
+def find_server(start_port: int, tries: int = PORT_SEARCH):
+    """Bind the first free port, unless our own interface already answers.
+
+    8765 is a popular port for local development servers, and a launcher
+    that is double-clicked cannot be restarted with a flag. So: walk up
+    from the requested port; where a port is taken, check whether it is our
+    interface (then reuse it rather than start a second copy that would
+    fight it for the serial port) or something else (then keep looking).
+
+    Returns (server, url) for a fresh bind, (None, url) when our interface
+    is already running at url, or (None, None) when nothing in range works.
+    """
+    for port in range(start_port, start_port + tries):
+        url = "http://127.0.0.1:%d/" % port
+        try:
+            return LocalServer(("127.0.0.1", port), Handler), url
+        except OSError:
+            if already_running(url):
+                return None, url
+    return None, None
+
+
 def already_running(url: str) -> bool:
     """Is our own interface already answering on this port?"""
     import urllib.request
@@ -790,24 +837,26 @@ def main(argv=None):
     ap.add_argument("--no-browser", action="store_true",
                     help="do not open a browser window")
     args = ap.parse_args(argv)
-    url = "http://127.0.0.1:%d/" % args.http_port
 
     controller = Controller(LT.CELLS_DIR)
     Handler.controller = controller
 
     # Loopback only: never expose current control to the network.
-    try:
-        server = LocalServer(("127.0.0.1", args.http_port), Handler)
-    except OSError:
-        if already_running(url):
-            # A second double-click on the launcher: reuse the first one.
-            print("The interface is already running; opening it: %s" % url)
-            if not args.no_browser:
-                webbrowser.open(url)
-            return 0
-        print("Port %d is used by another program. Start with "
-              "--http-port 8766 (or any free port)." % args.http_port)
+    server, url = find_server(args.http_port)
+    if server is None and url is not None:
+        # A second double-click on the launcher: reuse the first one.
+        print("The interface is already running; opening it: %s" % url)
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
+    if server is None:
+        print("Ports %d-%d are all used by other programs. Start with "
+              "--http-port and a free port number."
+              % (args.http_port, args.http_port + PORT_SEARCH - 1))
         return 1
+    if not url.endswith(":%d/" % args.http_port):
+        print("Port %d is used by another program; using %s instead."
+              % (args.http_port, url))
 
     if args.port:
         controller.open_port(args.port)
