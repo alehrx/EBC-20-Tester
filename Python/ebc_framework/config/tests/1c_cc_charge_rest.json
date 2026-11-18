@@ -1,0 +1,15 @@
+{
+  "name": "1c_cc_charge_rest",
+  "type": "charge",
+  "description": "Constant-current charge at 1C up to 4.2 V with no CV phase, then rest at zero current for 1 hour",
+  "sample_period_s": 1,
+  "max_duration_s": 10800,
+  "current_unit": "C",
+  "charge": {
+    "protocol": "cc",
+    "c_rate": 1,
+    "v_max": 4.2,
+    "rest_after_s": 3600
+  },
+  "comment": "\"protocol\": \"cc\" charges at constant current and stops the moment the voltage reaches v_max, so there is no CV phase (the tester itself only offers CC-CV, so the software ends it). Then 1 hour of logged rest; change rest_after_s for longer or shorter. Use \"cc_cv\" for a full CC-CV charge instead. No cell is named: pick it when launching."
+}

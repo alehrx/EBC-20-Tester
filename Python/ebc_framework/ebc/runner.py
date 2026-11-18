@@ -210,6 +210,69 @@ class CCCVChargeController:
         return None
 
 
+# The tester's own CV target sits this far above a CC-only charge's v_max,
+# so its CV hold never starts before the software's STOP arrives.
+CC_ONLY_CV_MARGIN_V = 0.03
+
+
+class CCChargeController:
+    """
+    Constant-current charge that ends at v_max, with no CV phase.
+
+    The EBC-A20 has no CC-only charge: every start-charge command is CC-CV.
+    So the software ends it, with a STOP as soon as the measured voltage
+    reaches v_max (two consecutive readings, so one corrupted frame cannot
+    end it early). The command's own CV target is set CC_ONLY_CV_MARGIN_V
+    higher, capped at hard_max_v, so the tester never begins its CV hold
+    first. That target remains as a backstop: if readings stop arriving at
+    the very end, the tester holds there instead of charging on.
+    """
+
+    CONFIRM_SAMPLES = 2
+
+    def __init__(self, v_max: float):
+        self.v_max = v_max
+        self._hits = 0
+        self._charged = False
+
+    def __call__(self, m: Measurement, t: float) -> Optional[float]:
+        if m.mode == "charge":
+            self._charged = True
+        if self._charged and m.voltage >= self.v_max:
+            self._hits += 1
+            if self._hits >= self.CONFIRM_SAMPLES:
+                return float("nan")
+        else:
+            self._hits = 0
+        # Backstop: the tester ended the charge itself.
+        if self._charged and (m.pt == PT_STATUS_CHARGE_END or
+                              m.mode == "idle"):
+            return float("nan")
+        return None
+
+
+def _start_charge(dev: EBCA20, cell: Cell, proto: str, amps: float,
+                  v_max: float, cutoff_a: float):
+    """Command a charge phase and return the controller that ends it."""
+    if proto == "cc":
+        print(f"Charge phase: CC at {amps:.3f} A until {v_max:.3f} V "
+              f"(no CV phase)")
+        dev.limits.charge_cv = min(v_max + CC_ONLY_CV_MARGIN_V,
+                                   cell.hard_max_v)
+        dev.limits.charge_taper_a = cutoff_a
+        dev.set_charge(amps)
+        return CCChargeController(v_max=v_max)
+    if proto != "cc_cv":
+        raise ValueError(f"unknown charge protocol: {proto} "
+                         "(use \"cc_cv\" or \"cc\")")
+    print(f"Charge phase: CC-CV at {amps:.3f} A, "
+          f"target {v_max:.3f} V, taper {cutoff_a:.3f} A")
+    dev.limits.charge_cv = v_max
+    dev.limits.charge_taper_a = cutoff_a
+    dev.set_charge(amps)
+    return CCCVChargeController(v_max=v_max)
+
+
 # ---------------- rest (zero-current hold) controller ----------------
 
 class RestController:
@@ -598,8 +661,9 @@ def _run_protocol(test: "TestDef", cell: Cell, dev: EBCA20,
     def do_charge(resuming_rest_s: float = 0.0,
                   resume_active_state: Optional[dict] = None) -> None:
         proto = ccfg.get("protocol", "cc_cv")
-        if proto != "cc_cv":
-            raise ValueError(f"unknown charge protocol: {proto}")
+        if proto not in ("cc_cv", "cc"):
+            raise ValueError(f"unknown charge protocol: {proto} "
+                             "(use \"cc_cv\" or \"cc\")")
         amps_c = cell.c_to_amps(float(ccfg["c_rate"]))
         v_max = _charge_target_v(ccfg, cell)
         cutoff_a = (cell.c_to_amps(float(ccfg["cutoff_c"]))
@@ -607,8 +671,6 @@ def _run_protocol(test: "TestDef", cell: Cell, dev: EBCA20,
         phase_max_s = ccfg.get("max_duration_s", test.max_duration_s)
 
         if resuming_rest_s <= 0.0:
-            print(f"Charge phase: CC-CV at {amps_c:.3f} A, "
-                  f"target {v_max:.3f} V, taper {cutoff_a:.3f} A")
             progress_state["stage"] = "charge"
             prior_elapsed_s = float((resume_active_state or {}).get(
                 "phase_elapsed_s", 0.0))
@@ -617,10 +679,7 @@ def _run_protocol(test: "TestDef", cell: Cell, dev: EBCA20,
             controller_snapshot["fn"] = None
             remaining_max_s = (max(float(phase_max_s) - prior_elapsed_s, 0.0)
                                if phase_max_s is not None else None)
-            dev.limits.charge_cv = v_max
-            dev.limits.charge_taper_a = cutoff_a
-            dev.set_charge(amps_c)
-            ctrl = CCCVChargeController(v_max=v_max)
+            ctrl = _start_charge(dev, cell, proto, amps_c, v_max, cutoff_a)
             state["reason"] = dev.run(ctrl, period_s=period,
                                       max_duration_s=remaining_max_s,
                                       on_sample=on_sample)
@@ -838,9 +897,12 @@ def _run_test_body(test: TestDef, cell: Cell, dev: EBCA20,
         # `charge` block used by composite protocols. This makes a charge-only
         # file easy to derive without silently discarding CV/taper settings.
         charge_cfg = test.raw.get("charge")
+        proto = "cc_cv"
         if isinstance(charge_cfg, dict):
-            if charge_cfg.get("protocol", "cc_cv") != "cc_cv":
-                raise ValueError("standalone charge only supports cc_cv")
+            proto = charge_cfg.get("protocol", "cc_cv")
+            if proto not in ("cc_cv", "cc"):
+                raise ValueError(f"unknown charge protocol: {proto} "
+                                 "(use \"cc_cv\" or \"cc\")")
             if "c_rate" not in charge_cfg:
                 raise ValueError("charge block requires c_rate")
             amps = cell.c_to_amps(float(charge_cfg["c_rate"]))
@@ -870,12 +932,7 @@ def _run_test_body(test: TestDef, cell: Cell, dev: EBCA20,
             original_on_sample(m, te)
 
         if not resumed_charge_rest:
-            print(f"Charge phase: CC-CV at {amps:.3f} A, "
-                  f"target {v_max:.3f} V, taper {cutoff_a:.3f} A")
-            dev.limits.charge_cv = v_max
-            dev.limits.charge_taper_a = cutoff_a
-            dev.set_charge(amps)
-            ctrl = CCCVChargeController(v_max=v_max)
+            ctrl = _start_charge(dev, cell, proto, amps, v_max, cutoff_a)
             reason = dev.run(
                 ctrl, period_s=period,
                 max_duration_s=remaining_duration(charge_max_s),

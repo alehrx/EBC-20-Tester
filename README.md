@@ -395,13 +395,21 @@ discharge, rest, charge, rest, repeated.
   - `"hppc"`: pulses, with `pulse_s` and `pulse_rest_s`.
   - `"dst"`: a staircase. Add a `"profile"` list as above; its largest step
     is scaled to `c_rate`.
+- The charge `protocol` can be (in a `protocol` test and in a `charge` test):
+  - `"cc_cv"` (default): constant current up to `v_max`, then constant
+    voltage while the current falls, ending at `cutoff_c`.
+  - `"cc"`: constant current only. The charge stops the moment the voltage
+    reaches `v_max`, with no CV phase; `cutoff_c` is not used. The tester
+    itself only offers CC-CV, so the software sends STOP at `v_max`; the
+    tester's own CV target is set 30 mV higher so its CV hold never starts
+    first. Ready-made: `1c_cc_charge_rest` and `2c_cc_charge_rest`.
 - In `protocol` tests, `max_duration_s` applies to each phase separately.
 
 ### All test types
 
 | `type` | Does | Main fields |
 | --- | --- | --- |
-| `charge` | CC-CV charge | `charge: {c_rate, v_max, cutoff_c, rest_after_s}` |
+| `charge` | CC-CV charge, or CC only with `"protocol": "cc"` | `charge: {protocol, c_rate, v_max, cutoff_c, rest_after_s}` |
 | `discharge` | Constant-current discharge to a voltage; reports capacity | `current`, `v_cutoff` |
 | `dst` | Plays a list of current steps | `profile`, `repeat` |
 | `hppc` | Discharge pulse and rest, repeated until `v_min` | `pulse_current`, `pulse_s`, `rest_s`, `v_min` |

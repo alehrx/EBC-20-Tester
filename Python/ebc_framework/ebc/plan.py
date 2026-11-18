@@ -164,6 +164,27 @@ def _cccv(cell, i_cc, v_max, i_cut, limit_s, match, prefix="Charge"):
     return out
 
 
+def _cc_only(cell, i_cc, v_max, limit_s, match, prefix="Charge"):
+    """A CC-only charge: the software stops it at v_max, no CV phase."""
+    t_cc, _ = _cccv_estimate_s(cell, i_cc, 0.0, v_max)
+    est, limited = _cap(t_cc, limit_s)
+    until = ("time limit %s" % _fmt_s(est) if limited
+             else "voltage reaches %.3f V, then STOP (no CV)" % v_max)
+    return [Segment("%s CC %.2f A, no CV" % (prefix, i_cc), "charge",
+                    abs(i_cc), est, limited, until, dict(match),
+                    None, abs(i_cc), None, v_max)]
+
+
+def _charge_phase(cell, proto, i_cc, v_max, i_cut, limit_s, match,
+                  prefix="Charge"):
+    if proto == "cc":
+        return _cc_only(cell, i_cc, v_max, limit_s, match, prefix)
+    if proto != "cc_cv":
+        raise ValueError('unknown charge protocol: %s (use "cc_cv" or "cc")'
+                         % proto)
+    return _cccv(cell, i_cc, v_max, i_cut, limit_s, match, prefix)
+
+
 def _discharge(cell, amps, v_cut, limit_s, match, label):
     est, limited = _cap(_discharge_estimate_s(cell, amps, v_cut), limit_s)
     until = ("time limit %s" % _fmt_s(est) if limited
@@ -285,11 +306,14 @@ def plan_test(test: TestDef, cell: Cell) -> Plan:
                      if "cutoff_c" in ccfg else cell.charge_taper_a)
             limit = ccfg.get("max_duration_s", test.max_duration_s)
             rest_after = float(ccfg.get("rest_after_s", 0.0))
+            proto = ccfg.get("protocol", "cc_cv")
         else:
             i_cc = test.amps(raw["current"], cell)
             v_max, i_cut = cell.max_v, cell.charge_taper_a
             limit, rest_after = test.max_duration_s, 0.0
-        segs += _cccv(cell, chg(i_cc), v_max, i_cut, limit, main)
+            proto = "cc_cv"
+        segs += _charge_phase(cell, proto, chg(i_cc), v_max, i_cut, limit,
+                              main)
         if rest_after > 0:
             segs.append(_rest("Rest after charge", rest_after,
                               {"stage": "rest_after_charge"}))
@@ -388,8 +412,10 @@ def plan_test(test: TestDef, cell: Cell) -> Plan:
                     i_cut = (cell.c_to_amps(float(ccfg["cutoff_c"]))
                              if "cutoff_c" in ccfg else cell.charge_taper_a)
                     limit = ccfg.get("max_duration_s", test.max_duration_s)
-                    segs += _cccv(cell, i_cc, v_max, i_cut, limit,
-                                  m("charge"), "Charge" + tag)
+                    segs += _charge_phase(cell,
+                                          ccfg.get("protocol", "cc_cv"),
+                                          i_cc, v_max, i_cut, limit,
+                                          m("charge"), "Charge" + tag)
                     rest_after = float(ccfg.get("rest_after_s", 0))
                     if rest_after > 0:
                         segs.append(_rest("Rest after charge" + tag,
