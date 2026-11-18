@@ -1,0 +1,16 @@
+{
+  "name": "1c_charge_rest",
+  "type": "charge",
+  "description": "CC-CV charge at 1C to 4.2 V, then rest at zero current for 1 hour",
+  "sample_period_s": 1,
+  "max_duration_s": 10800,
+  "current_unit": "C",
+  "charge": {
+    "protocol": "cc_cv",
+    "c_rate": 1,
+    "v_max": 4.2,
+    "cutoff_c": 0.05,
+    "rest_after_s": 3600
+  },
+  "comment": "Charge at 1C until 4.2 V, hold 4.2 V while the current tapers, finish at 0.05C, then log 1 hour of rest (change rest_after_s for longer or shorter). max_duration_s limits the charge phase only. No cell is named: pick it when launching."
+}
